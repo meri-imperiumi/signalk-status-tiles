@@ -1,0 +1,39 @@
+{
+  "name": "@meri-imperiumi/signalk-status-tiles",
+  "version": "0.1.0",
+  "description": "Reduce raw Signal K paths to a small grid of context-aware status tiles",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "format": "npx @biomejs/biome check --use-editorconfig=true --write index.js public/ test/",
+    "lint": "npx @biomejs/biome check --use-editorconfig=true index.js public/",
+    "test": "node --test --test-force-exit \"test/*.test.js\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/meri-imperiumi/signalk-status-tiles.git"
+  },
+  "keywords": [
+    "signalk-node-server-plugin",
+    "signalk-category-utility",
+    "signalk-webapp"
+  ],
+  "author": "Henri Bergius <henri.bergius@iki.fi>",
+  "license": "EUPL-1.2",
+  "bugs": {
+    "url": "https://github.com/meri-imperiumi/signalk-status-tiles/issues"
+  },
+  "homepage": "https://github.com/meri-imperiumi/signalk-status-tiles#readme",
+  "signalk-plugin-enabled-by-default": false,
+  "signalk": {
+    "displayName": "Status Tiles",
+    "appIcon": "./public/icon.png"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@signalk/server-api": "^2.30.0"
+  }
+}

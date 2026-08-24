@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
+    <title>Status Tiles</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --green: #2e7d32;
+        --amber: #f57c00;
+        --red: #c62828;
+        --neutral: #616161;
+        --bg: #fff;
+        --fg: #1a1a1a;
+        --muted: #888;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #101010;
+          --fg: #eee;
+          --muted: #777;
+        }
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: #05070a; }
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        background: #05070a;
+        color: #d8e2ee;
+      }
+      st-app { display: block; height: 100%; }
+    </style>
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <st-app></st-app>
+  </body>
+</html>
