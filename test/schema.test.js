@@ -22,6 +22,27 @@ describe("schema", () => {
     assert.ok(json.includes("predicate"));
   });
 
+  test("schema has no shared object/array references (Signal K rejects them as circular)", () => {
+    // Signal K's plugin server stores the schema as JSON and treats any
+    // repeated object/array identity in the tree as a circular reference,
+    // failing plugin load. JSON.stringify doesn't catch this (it serializes
+    // shared refs fine), so walk the tree and assert every object/array
+    // node is visited exactly once. This guards against the regression
+    // where shared field/enum constants were reused across oneOf variants.
+    const s = buildSchema();
+    const seen = new Set();
+    const visit = (node) => {
+      if (node === null || typeof node !== "object") return;
+      assert.ok(
+        !seen.has(node),
+        "schema contains a shared object/array reference (circular per Signal K)",
+      );
+      seen.add(node);
+      for (const v of Object.values(node)) visit(v);
+    };
+    visit(s);
+  });
+
   test("predicate offers valuePath for two-path comparisons", () => {
     const s = buildSchema();
     const pred = s.properties.contexts.items.properties.predicate;

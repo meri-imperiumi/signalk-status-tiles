@@ -18,28 +18,38 @@ const staleMsField = (title) => ({
   default: 0,
 });
 
-const staleStateField = {
+/**
+ * Factory for the "state when stale" field.
+ *
+ * Returns a fresh object each call so the schema tree never contains
+ * the same object reference in two places — Signal K's plugin server
+ * rejects schemas with shared/circular references (it stores the
+ * schema as JSON and treats any repeated object identity as a
+ * circular reference). The same reason applies to every other field
+ * factory and to the `[...TILE_STATES]` enum spreads below.
+ */
+const staleStateField = () => ({
   type: "string",
   title: "State when stale",
   description:
     "What this check resolves to when its input is stale/absent (SPEC §4)",
-  enum: TILE_STATES,
+  enum: [...TILE_STATES],
   default: "neutral",
-};
+});
 
-const reasonField = {
+const reasonField = () => ({
   type: "string",
   title: "Reason text",
   description: "Short human string shown on hover/debug (optional)",
-};
+});
 
-const displayField = {
+const displayField = () => ({
   type: "boolean",
   title: "Display value",
   description:
     "Designate this check to supply the tile's headline number (at most one per tile, SPEC §3.4)",
   default: false,
-};
+});
 
 /**
  * A context predicate node. Inlined (no `$ref`/`definitions`) because the
@@ -174,9 +184,9 @@ const checkVariants = [
         description:
           "Headline text for the bad state (shown when this check is designated Display). Defaults to NOT OK; e.g. STOPPED.",
       },
-      display: displayField,
-      reason: reasonField,
-      staleState: staleStateField,
+      display: displayField(),
+      reason: reasonField(),
+      staleState: staleStateField(),
       staleMs: staleMsField("Staleness threshold (ms)"),
     },
     required: ["type", "path"],
@@ -200,13 +210,13 @@ const checkVariants = [
           warnState: {
             type: "string",
             title: "State when at/below warn",
-            enum: TARGET_STATES,
+            enum: [...TARGET_STATES],
             default: "amber",
           },
           critState: {
             type: "string",
             title: "State when below crit",
-            enum: TARGET_STATES,
+            enum: [...TARGET_STATES],
             default: "red",
           },
         },
@@ -222,13 +232,13 @@ const checkVariants = [
           warnState: {
             type: "string",
             title: "State when at/above warn",
-            enum: TARGET_STATES,
+            enum: [...TARGET_STATES],
             default: "amber",
           },
           critState: {
             type: "string",
             title: "State when above crit",
-            enum: TARGET_STATES,
+            enum: [...TARGET_STATES],
             default: "red",
           },
         },
@@ -239,9 +249,9 @@ const checkVariants = [
         enum: ["", "%", "ratio", "V", "A", "W", "Hz", "K"],
         default: "",
       },
-      display: displayField,
-      reason: reasonField,
-      staleState: staleStateField,
+      display: displayField(),
+      reason: reasonField(),
+      staleState: staleStateField(),
       staleMs: staleMsField("Staleness threshold (ms)"),
     },
     required: ["type", "path"],
@@ -257,9 +267,9 @@ const checkVariants = [
       path2: { type: "string", title: "Path B" },
       warn: { type: "number", title: "Warn at/above" },
       crit: { type: "number", title: "Critical at/above" },
-      display: displayField,
-      reason: reasonField,
-      staleState: staleStateField,
+      display: displayField(),
+      reason: reasonField(),
+      staleState: staleStateField(),
       staleMs: staleMsField("Staleness threshold (ms)"),
     },
     required: ["type", "path", "path2"],
@@ -278,9 +288,9 @@ const checkVariants = [
       levelPath: { type: "string", title: "Secondary level path (optional)" },
       levelWarn: { type: "number", title: "Level warn at/below (amber)" },
       levelCrit: { type: "number", title: "Level critical at/below (red)" },
-      display: displayField,
-      reason: reasonField,
-      staleState: staleStateField,
+      display: displayField(),
+      reason: reasonField(),
+      staleState: staleStateField(),
       staleMs: staleMsField("Staleness threshold (ms)"),
     },
     required: ["type", "paths"],
@@ -307,7 +317,7 @@ const checkVariants = [
             state: {
               type: "string",
               title: "Tile state",
-              enum: TILE_STATES,
+              enum: [...TILE_STATES],
             },
           },
           required: ["value", "state"],
@@ -316,12 +326,12 @@ const checkVariants = [
       default: {
         type: "string",
         title: "Default for unmapped values",
-        enum: TILE_STATES,
+        enum: [...TILE_STATES],
         default: "neutral",
       },
-      display: displayField,
-      reason: reasonField,
-      staleState: staleStateField,
+      display: displayField(),
+      reason: reasonField(),
+      staleState: staleStateField(),
       staleMs: staleMsField("Staleness threshold (ms)"),
     },
     required: ["type", "path"],
@@ -385,9 +395,9 @@ const checkVariants = [
         },
       },
       unit: { type: "string", title: "Display unit" },
-      display: displayField,
-      reason: reasonField,
-      staleState: staleStateField,
+      display: displayField(),
+      reason: reasonField(),
+      staleState: staleStateField(),
       staleMs: staleMsField("Staleness threshold (ms)"),
     },
     required: ["type", "path"],
@@ -408,33 +418,33 @@ const checkVariants = [
         properties: {
           normal: {
             type: "string",
-            enum: TILE_STATES,
+            enum: [...TILE_STATES],
             default: "green",
           },
           alert: {
             type: "string",
-            enum: TILE_STATES,
+            enum: [...TILE_STATES],
             default: "green",
           },
           warn: {
             type: "string",
-            enum: TILE_STATES,
+            enum: [...TILE_STATES],
             default: "amber",
           },
           alarm: {
             type: "string",
-            enum: TILE_STATES,
+            enum: [...TILE_STATES],
             default: "red",
           },
           emergency: {
             type: "string",
-            enum: TILE_STATES,
+            enum: [...TILE_STATES],
             default: "red",
           },
         },
       },
-      reason: reasonField,
-      staleState: staleStateField,
+      reason: reasonField(),
+      staleState: staleStateField(),
       staleMs: staleMsField("Staleness threshold (ms)"),
     },
     required: ["type", "path"],
@@ -450,14 +460,14 @@ const checkVariants = [
       mismatchState: {
         type: "string",
         title: "State on mismatch",
-        enum: TARGET_STATES,
+        enum: [...TARGET_STATES],
         default: "amber",
         description:
           "Typically amber for risk, but opportunity is the honest read when the mismatch is missed upside rather than risk (e.g. a deployable that should have been deployed — SPEC §3.3, §7.1).",
       },
-      display: displayField,
-      reason: reasonField,
-      staleState: staleStateField,
+      display: displayField(),
+      reason: reasonField(),
+      staleState: staleStateField(),
       staleMs: staleMsField("Staleness threshold (ms)"),
     },
     required: ["type", "path", "path2"],
@@ -472,7 +482,7 @@ const checkVariants = [
       state: {
         type: "string",
         title: "State when predicate is true",
-        enum: TARGET_STATES,
+        enum: [...TARGET_STATES],
         default: "amber",
         description:
           "What the tile shows when the predicate matches (default amber). Green when it doesn't. Use opportunity when the condition represents an open beneficial window rather than a problem (SPEC §2.1).",
@@ -483,8 +493,8 @@ const checkVariants = [
         description:
           "Same predicate forms as a context: path comparisons combined with allOf/anyOf/not. Nesting capped at depth 2 (SPEC §9).",
       },
-      reason: reasonField,
-      staleState: staleStateField,
+      reason: reasonField(),
+      staleState: staleStateField(),
       staleMs: staleMsField("Staleness threshold (ms)"),
     },
     required: ["type", "predicate"],
