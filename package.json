@@ -27,7 +27,14 @@
   "signalk-plugin-enabled-by-default": false,
   "signalk": {
     "displayName": "Status Tiles",
-    "appIcon": "./public/icon.png"
+    "appIcon": "./icon.png",
+    "screenshots": [
+      "doc/tiles.png"
+    ],
+    "recommends": [
+      "@meri-imperiumi/signalk-autostate",
+      "@meri-imperiumi/signalk-energy-predictor"
+    ]
   },
   "engines": {
     "node": ">=22.0.0"
