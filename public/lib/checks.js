@@ -14,7 +14,12 @@
 
 import { evalPredicate } from "./context.js";
 import { DEFAULT_STALE_MS } from "./staleness.js";
-import { formatDisplayValue, unwrap, valueToNumber } from "./util.js";
+import {
+  formatDisplayValue,
+  formatSmartNumber,
+  unwrap,
+  valueToNumber,
+} from "./util.js";
 
 /** The closed set of check type names (SPEC §3.3). */
 export const CHECK_TYPES = new Set([
@@ -561,10 +566,14 @@ function looseEqual(a, b) {
   return String(a) === String(b);
 }
 
-/** @param {number} n @returns {string} */
+/**
+ * Formats a unitless number for display (spreads, levels, bare values
+ * with no displayUnits). Uses the shared smart magnitude precision so a
+ * glance reads cleanly regardless of magnitude.
+ * @param {number} n @returns {string}
+ */
 function formatNum(n) {
-  if (Number.isInteger(n)) return String(n);
-  return String(Math.round(n * 1000) / 1000);
+  return formatSmartNumber(n);
 }
 
 /**
