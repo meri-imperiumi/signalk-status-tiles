@@ -4,7 +4,7 @@ This plugin reduces a large number of raw Signal K paths to a small grid of cont
 
 Tiles can be gated by named contexts (at anchor, engine running, underway, …) so they only evaluate and appear under the conditions that make them relevant, and a per-tile `active` predicate can downgrade a green tile to neutral when a condition like "inverter on" isn't met. A companion webapp renders the tiles as a glanceable dashboard, hot-swapping its config whenever you save a new one on the server.
 
-This plugin was inspired by [how SV Sabadoe monitors their boat](https://svsabado.com/one-screen-one-question-how-we-monitor-sabado/).
+This plugin was inspired by [how SV Sabado monitors their boat](https://svsabado.com/one-screen-one-question-how-we-monitor-sabado/).
 
 ## Configuration
 
