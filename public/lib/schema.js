@@ -278,11 +278,24 @@ const checkVariants = [
       type: { type: "string", const: "stateMatch" },
       path: { type: "string", title: "Signal K path" },
       map: {
-        type: "object",
-        title: "Value → state map",
-        additionalProperties: {
-          type: "string",
-          enum: TILE_STATES,
+        type: "array",
+        title: "Value → state rows",
+        description:
+          "For each distinct value the path can carry (exact string match, e.g. 'surplus'), the tile state it should produce. Values not listed fall to the default below. Rows, not a free-form object, so the admin UI can render them.",
+        items: {
+          type: "object",
+          properties: {
+            value: {
+              type: "string",
+              title: "Path value",
+            },
+            state: {
+              type: "string",
+              title: "Tile state",
+              enum: TILE_STATES,
+            },
+          },
+          required: ["value", "state"],
         },
       },
       default: {
@@ -291,6 +304,7 @@ const checkVariants = [
         enum: TILE_STATES,
         default: "neutral",
       },
+      display: displayField,
       reason: reasonField,
       staleState: staleStateField,
       staleMs: staleMsField("Staleness threshold (ms)"),
@@ -557,6 +571,12 @@ export function buildSchema() {
                     type: "string",
                     title: "Signal K path",
                   },
+                  unit: {
+                    type: "string",
+                    title: "Display unit (fallback)",
+                    description:
+                      "Only used when the path publishes no usable unit metadata: shown as the value's symbol and enables SI prefixing (e.g. 'Wh' renders 3190 as 3.19 kWh)",
+                  },
                 },
                 required: ["path"],
               },
@@ -583,6 +603,22 @@ export function buildSchema() {
             title: "Overflow slots",
             default: 1,
             minimum: 0,
+          },
+          surfaceMs: {
+            type: "integer",
+            title: "Surface dwell (ms)",
+            default: 10000,
+            minimum: 0,
+            description:
+              "An unclaimed anomaly must be detected continuously this long before it takes an overflow slot — sub-dwell blips never surface (SPEC §10 hysteresis)",
+          },
+          clearMs: {
+            type: "integer",
+            title: "Clear dwell (ms)",
+            default: 30000,
+            minimum: 0,
+            description:
+              "After an anomaly stops being detected it holds its slot this long before the slot frees — flicker across a zone boundary keeps the slot instead of churning it (SPEC §10 hysteresis)",
           },
           staleMs: staleMsField("Coverage staleness threshold (ms)"),
           severityMap: {

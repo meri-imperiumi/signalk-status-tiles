@@ -5,19 +5,28 @@
  * (a path claimed only by a context-gated tile whose context is inactive
  * is treated as unclaimed for the duration the context is inactive).
  *
- * Output is a bounded list of overflow anomalies with hysteresis, plus a
- * durable log entry for every detected anomaly (surfaced or not).
+ * Output is a bounded list of overflow anomalies with hysteresis
+ * (AnomalyTracker), plus open/clear events for the durable anomaly log
+ * (SPEC §10): every detected anomaly is recorded, surfaced or not —
+ * including ones bumped by something more severe.
  *
  * NOTE: this module is the detection core. The webapp owns the timer
- * loop that drives re-evaluation and the slot-ranking policy; it calls
- * `detectAnomalies` on each timer tick and feeds the result through
- * `rankAndAssign` to produce the surfaced list.
+ * loop that drives re-evaluation; the engine calls `detectAnomalies` on
+ * each tick and feeds the result through its `AnomalyTracker`, which
+ * time-gates surfacing/clearing and ranks for the bounded slot set.
  *
  * @file coverage.js */
 
 import { unwrapConfig } from "./paths.js";
 import { DEFAULT_STALE_MS } from "./staleness.js";
 import { valueToNumber } from "./util.js";
+
+/** Default dwell before an unclaimed anomaly takes an overflow slot. */
+export const DEFAULT_SURFACE_MS = 10_000;
+/** Default dwell after an anomaly stops being detected before its slot
+ * is freed — longer than surfaceMs so a flickering value holds the slot
+ * rather than churning it (SPEC §10 hysteresis). */
+export const DEFAULT_CLEAR_MS = 30_000;
 
 const ZONE_SEVERITY_MAP = {
   nominal: "green",
@@ -115,29 +124,104 @@ export function detectAnomalies(config, cache, claimed, now = Date.now()) {
 }
 
 /**
- * Ranks anomalies for slot assignment when more exist than slots, and
- * returns which anomalies are surfaced vs. bumped (SPEC §10). Ranking:
- * severity first (red before amber), then longest-since-first-detected
- * (oldest anomaly wins a slot, so a transient that's been showing wins
- * over a brand-new one of equal severity).
+ * Hysteresis + ranking state machine for overflow slots (SPEC §10).
  *
- * `firstSeen` is a Map<path, number> maintained by the caller across
- * ticks (the persistence of anomaly start time).
+ * Debounces both directions so a zone-crossing value can't churn a slot:
+ * - **Surfacing**: an anomaly must be detected continuously for
+ *   `surfaceMs` before it is eligible for a slot — a sub-dwell blip
+ *   never takes one.
+ * - **Clearing**: once detection stops, the anomaly *holds* its
+ *   eligibility for `clearMs` (re-detection during the window cancels
+ *   the clear seamlessly) before it vacates. A value flickering across
+ *   the zone boundary keeps the slot instead of blinking it.
  *
- * @param {Array} anomalies
- * @param {Map<string, number>} firstSeen - path → ms epoch first detected
- * @param {number} slotCount
- * @param {number} now
- * @returns {{surfaced: Array, bumped: Array}}
+ * Ranking when more eligible anomalies exist than slots: severity
+ * first (red before amber), then longest-since-first-detected. Extras
+ * are "bumped" — not surfaced, but still logged (via the returned
+ * events / the caller's durable log), never silently dropped.
  */
-export function rankAndAssign(anomalies, firstSeen, slotCount, now) {
-  const ranked = [...anomalies].sort((a, b) => {
-    if (a.state !== b.state) return a.state === "red" ? -1 : 1; // red first
-    const fa = firstSeen.get(a.path) ?? now;
-    const fb = firstSeen.get(b.path) ?? now;
-    return fa - fb; // oldest first
-  });
-  const surfaced = ranked.slice(0, slotCount);
-  const bumped = ranked.slice(slotCount);
-  return { surfaced, bumped };
+export class AnomalyTracker {
+  /**
+   * @param {object} [opts]
+   * @param {number} [opts.surfaceMs]
+   * @param {number} [opts.clearMs]
+   */
+  constructor(opts = {}) {
+    this.surfaceMs = opts.surfaceMs ?? DEFAULT_SURFACE_MS;
+    this.clearMs = opts.clearMs ?? DEFAULT_CLEAR_MS;
+    /** @type {Map<string, {state: string, zone: string, value: number, firstSeen: number, lastSeen: number, clearingSince: number|null}>} */
+    this.known = new Map();
+  }
+
+  /**
+   * Feeds one tick's detected anomalies; returns slot assignment and
+   * log events.
+   *
+   * @param {Array<{path: string, state: string, zone: string, value: number}>} detected
+   * @param {number} slotCount
+   * @param {number} [now]
+   * @returns {{surfaced: Array<{path: string, state: string, zone: string, value: number, firstSeen: number}>, bumped: Array, events: Array<{type: "opened"|"cleared", path: string}>}}
+   */
+  update(detected, slotCount, now = Date.now()) {
+    const events = [];
+    const seen = new Set(detected.map((d) => d.path));
+
+    for (const d of detected) {
+      const k = this.known.get(d.path);
+      if (!k) {
+        this.known.set(d.path, {
+          state: d.state,
+          zone: d.zone,
+          value: d.value,
+          firstSeen: now,
+          lastSeen: now,
+          clearingSince: null,
+        });
+        events.push({ type: "opened", path: d.path, ...d, firstSeen: now });
+      } else {
+        // Refresh state/value; re-detection cancels a pending clear.
+        k.state = d.state;
+        k.zone = d.zone;
+        k.value = d.value;
+        k.lastSeen = now;
+        k.clearingSince = null;
+      }
+    }
+
+    // Start/finish clears for anomalies no longer detected.
+    for (const [path, k] of this.known) {
+      if (seen.has(path)) continue;
+      if (k.clearingSince == null) k.clearingSince = now;
+      if (now - k.clearingSince >= this.clearMs) {
+        this.known.delete(path);
+        events.push({ type: "cleared", path, clearedAt: now });
+      }
+    }
+
+    // Slot-eligible: dwelled past surfaceMs. Entries inside their clear
+    // window are still eligible (they hold the slot against flicker);
+    // ones that never reached surfaceMs aren't (a blip stays invisible).
+    const eligible = [];
+    for (const [path, k] of this.known) {
+      if (now - k.firstSeen >= this.surfaceMs) {
+        eligible.push({
+          path,
+          state: k.state,
+          zone: k.zone,
+          value: k.value,
+          firstSeen: k.firstSeen,
+        });
+      }
+    }
+    eligible.sort((a, b) => {
+      if (a.state !== b.state) return a.state === "red" ? -1 : 1;
+      return a.firstSeen - b.firstSeen;
+    });
+
+    return {
+      surfaced: eligible.slice(0, slotCount),
+      bumped: eligible.slice(slotCount),
+      events,
+    };
+  }
 }

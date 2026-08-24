@@ -3,19 +3,37 @@
  *
  * The server side is intentionally thin: it serves the plugin configuration
  * (contexts + tiles) to the webapp via a single REST endpoint and validates
- * it on start. All evaluation — context predicates, checks, staleness,
- * tile aggregation, coverage — runs in the webapp, which subscribes to the
- * Signal K stream directly. See SPEC.md.
+ * it on start. On every start it publishes a hash of the config contents as
+ * a delta so connected webapps can reload when the config changes
+ * server-side (public/lib/config-hash.js). All evaluation — context
+ * predicates, checks, staleness, tile aggregation, coverage — runs in the
+ * webapp, which subscribes to the Signal K stream directly. See SPEC.md.
  *
  * @file index.js */
 
 /** @typedef {import("@signalk/server-api").ServerAPI} ServerAPI */
 /** @typedef {import("@signalk/server-api").Plugin} Plugin */
 
+import { createHash } from "node:crypto";
 import { validateConfig } from "./public/lib/config.js";
+import { CONFIG_HASH_PATH, canonicalJson } from "./public/lib/config-hash.js";
 import { buildSchema } from "./public/lib/schema.js";
 
 const PLUGIN_ID = "signalk-status-tiles";
+
+/**
+ * Stable hash of the config contents (sha256 over the canonical
+ * serialization). Used as a change token: the webapp compares it
+ * against the last hash it saw to decide whether to re-fetch.
+ *
+ * @param {object} config
+ * @returns {string} hex digest
+ */
+export function configHash(config) {
+  return createHash("sha256")
+    .update(canonicalJson(config ?? {}))
+    .digest("hex");
+}
 
 /**
  * @param {ServerAPI} app - Signal K server API
@@ -26,6 +44,8 @@ export default function (app) {
 
   /** @type {object|null} */
   let pluginConfig = null;
+  /** @type {string|null} hash of the current config (see configHash) */
+  let pluginConfigHash = null;
 
   const plugin = {
     id: PLUGIN_ID,
@@ -61,10 +81,27 @@ export default function (app) {
         setStatus?.(`Ready: ${tileCount} tile(s), ${ctxCount} context(s)`);
       }
       pluginConfig = config || {};
+      pluginConfigHash = configHash(pluginConfig);
+      // Signal config changes to connected webapps. Server-side edits
+      // restart the plugin (stop + start), so start() is exactly the
+      // moment a new config becomes visible: publish its hash as a
+      // delta on the same stream the webapp already consumes, and the
+      // webapp re-fetches the config when the hash differs from what
+      // it loaded (public/lib/config-hash.js).
+      app.handleMessage?.(PLUGIN_ID, {
+        context: "vessels.self",
+        updates: [
+          {
+            timestamp: new Date().toISOString(),
+            values: [{ path: CONFIG_HASH_PATH, value: pluginConfigHash }],
+          },
+        ],
+      });
     },
 
     stop() {
       pluginConfig = null;
+      pluginConfigHash = null;
       setStatus?.("Stopped");
     },
 
@@ -72,6 +109,8 @@ export default function (app) {
      * Serves the current config to the webapp, plus the candidate-path
      * patterns for the coverage layer (SPEC §10). The webapp fetches this
      * on load to build its subscription set and evaluation engine.
+     * `configHash` is the same change token published as a delta on
+     * start, so the webapp has a baseline to compare against.
      *
      * @param {object} router - Express router mounted at /plugins/<id>
      */
@@ -81,7 +120,7 @@ export default function (app) {
           res.status(503).json({ message: "Plugin not started" });
           return;
         }
-        res.json(pluginConfig);
+        res.json({ config: pluginConfig, configHash: pluginConfigHash });
       });
     },
   };

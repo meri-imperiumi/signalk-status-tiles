@@ -214,6 +214,24 @@ class StTileGrid extends HTMLElement {
       .footer-label { color: #5b6b7d; }
       .footer-value { color: #9fb0c2; font-variant-numeric: tabular-nums; }
       .tile.neutral .footer { opacity: 0.7; }
+      /* Overflow slots (SPEC §10/§11.1): reserved cells appended after
+         the claimed tiles. Always present at a fixed count so the grid
+         extent — and therefore every tile's position — is independent
+         of whether an anomaly is showing. Empty slots recede further
+         than neutral tiles: they carry no judgment at all. */
+      .tile.slot {
+        border-style: dashed;
+        border-color: #131c26;
+        background: #05080d;
+        box-shadow: none;
+        opacity: 0.25;
+      }
+      .tile.slot.lit {
+        /* Occupied: a surfaced unclaimed anomaly — problem-colored,
+           pulsing like any alarm, with a dashed outline marking it as a
+           temporary overflow occupant rather than a configured tile. */
+        opacity: 1;
+      }
       .bracket {
         position: absolute;
         width: 2.2vh;
@@ -346,6 +364,16 @@ class StTileGrid extends HTMLElement {
     this.errorEl.textContent = msg || "";
   }
 
+  /**
+   * Number of reserved overflow slots (SPEC §10). Layout-time config:
+   * set once from `coverage.slots`; only the *occupants* change at
+   * runtime, never the count/positions (SPEC §11.1).
+   * @param {number} n
+   */
+  set slotCount(n) {
+    this._slotCount = Number.isFinite(n) ? Math.max(0, n | 0) : 0;
+  }
+
   set tiles(list) {
     this.gridEl.innerHTML = "";
     for (const t of list || []) {
@@ -399,26 +427,50 @@ class StTileGrid extends HTMLElement {
       }
       this.gridEl.append(tile);
     }
+    // Reserved overflow slots, always rendered (SPEC §10): empty cells
+    // when no anomaly is showing, filled by `set coverage` below.
+    for (let i = 0; i < (this._slotCount ?? 0); i++) {
+      const s = document.createElement("div");
+      s.className = "tile slot";
+      this.gridEl.append(s);
+    }
   }
 
+  /**
+   * Fills the reserved overflow slots with surfaced anomalies, in rank
+   * order. Re-fills on every evaluation (the grid is rebuilt by `set
+   * tiles` first); never changes the slot count — an absent anomaly
+   * leaves its cell empty, it doesn't remove it (SPEC §10/§11.1).
+   * @param {Array<{path: string, state: string, zone: string}>} list
+   */
   set coverage(list) {
-    // Overflow slots appended after the claimed tiles (SPEC §10).
-    for (const c of list || []) {
-      const tile = document.createElement("div");
-      tile.className = "tile lit alarm";
-      tile.style.setProperty("--hue", STATE_HUE[c.state] ?? 0);
-      tile.style.outline = "2px dashed hsl(0 70% 55%)";
-      tile.style.outlineOffset = "-0.6vh";
+    const slots = this.gridEl.querySelectorAll(".tile.slot");
+    slots.forEach((slot, i) => {
+      slot.className = "tile slot";
+      slot.style.removeProperty("--hue");
+      slot.style.outline = "";
+      slot.replaceChildren();
+      const c = list?.[i];
+      if (!c) return;
+      slot.className = "tile slot lit alarm";
+      slot.style.setProperty("--hue", STATE_HUE[c.state] ?? 0);
+      slot.style.outline = "2px dashed hsl(0 70% 55%)";
+      slot.style.outlineOffset = "-0.6vh";
       const label = document.createElement("div");
       label.className = "label";
-      label.textContent = c.path;
+      label.textContent = shortPath(c.path);
       const r = document.createElement("div");
       r.className = "reason";
       r.textContent = `${c.zone.toUpperCase()} ANOMALY`;
-      tile.append(label, r);
-      this.gridEl.append(tile);
-    }
+      slot.append(label, r);
+    });
   }
+}
+
+/** Last two dot-segments of a path — full paths overflow a tile label. */
+function shortPath(p) {
+  const parts = String(p).split(".");
+  return parts.slice(-2).join(".");
 }
 
 customElements.define("st-tile-grid", StTileGrid);

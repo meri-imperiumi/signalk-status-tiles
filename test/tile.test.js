@@ -27,10 +27,15 @@ describe("tile aggregation", () => {
     assert.strictEqual(t.state, "red");
   });
 
-  test("context inactive => neutral outright, checks do not run", () => {
+  test("context inactive => gated by the ENGINE (hidden), evalTile itself runs checks when called", () => {
+    // Context gating moved to the engine (SPEC §5, revised): an
+    // inactive-context tile is omitted from the engine's output
+    // entirely. evalTile is only called for shown tiles — direct calls
+    // run checks regardless, which is what lets the engine's filter be
+    // the single gating point.
     const c = new PathCache();
     c.set("nav", "sailing"); // context wants anchored
-    c.set("alarm", true); // would be red if checks ran
+    c.set("alarm", true);
     const contexts = new Map([
       [
         "anchored",
@@ -47,10 +52,7 @@ describe("tile aggregation", () => {
       c,
       contexts,
     );
-    assert.strictEqual(t.state, "neutral");
-    assert.strictEqual(t.reason, "context inactive");
-    // context-inactive neutral shows NO display value (not a dash)
-    assert.strictEqual(t.displayValue, undefined);
+    assert.strictEqual(t.state, "red");
   });
 
   test("context active => checks run normally", () => {
@@ -187,6 +189,47 @@ describe("tile aggregation", () => {
     assert.deepStrictEqual(t.footer[0], { label: "Port", value: "164 W" });
     assert.deepStrictEqual(t.footer[1], { label: "Starboard", value: "—" });
     assert.deepStrictEqual(t.footer[2], { label: "Total", value: "358 W" });
+  });
+
+  test("footer applies SI prefixing via meta.units or inline unit (3190 Wh -> 3.19 kWh)", () => {
+    const c = new PathCache();
+    // No displayUnits metadata at all — the standard `units` meta field
+    // is the symbol fallback.
+    c.set("energy.battery", 3190);
+    c.setMeta("energy.battery", { units: "Wh" });
+    // Neither metadata: the entry's inline unit is the last resort.
+    c.set("energy.solar", 3190);
+    // Metadata wins over the inline unit (W explicit here).
+    c.set("power.bus", 3190);
+    c.setMeta("power.bus", {
+      displayUnits: { formula: "value", symbol: "W", displayFormat: "0" },
+    });
+    const t = evalTile(
+      {
+        id: "e",
+        label: "E",
+        checks: [],
+        footer: [
+          { label: "Battery", path: "energy.battery" },
+          { label: "Solar", path: "energy.solar", unit: "Wh" },
+          { label: "Bus", path: "power.bus", unit: "Wh" },
+        ],
+      },
+      c,
+      new Map(),
+    );
+    assert.deepStrictEqual(t.footer[0], {
+      label: "Battery",
+      value: "3.19 kWh",
+    });
+    assert.deepStrictEqual(t.footer[1], {
+      label: "Solar",
+      value: "3.19 kWh",
+    });
+    // Published displayUnits beats the inline unit for the *unit source*:
+    // stays watts (not Wh). SI scaling still composes with the authored
+    // precision ("0" -> integer): 3190 W -> 3.19 kW -> "3 kW".
+    assert.deepStrictEqual(t.footer[2], { label: "Bus", value: "3 kW" });
   });
 
   test("footer omitted when not configured", () => {

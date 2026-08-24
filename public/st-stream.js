@@ -62,6 +62,13 @@ class SignalKStream {
     this.reconnectTimer = null;
     /** @type {boolean} */
     this.closed = false;
+    /**
+     * Delay before the next reconnect attempt. Resets to RETRY_MS on
+     * every connect(); setPaths() zeroes it so a deliberate
+     * re-subscribe reconnects at once.
+     * @type {number}
+     */
+    this.retryMs = RETRY_MS;
   }
 
   /**
@@ -81,6 +88,7 @@ class SignalKStream {
 
   connect() {
     if (this.closed) return;
+    this.retryMs = RETRY_MS;
     this.#status("connecting");
     const socket = this.socketFactory(this.#url());
     this.socket = socket;
@@ -123,7 +131,7 @@ class SignalKStream {
     socket.addEventListener("close", () => {
       if (this.closed) return;
       this.#status("retrying");
-      this.reconnectTimer = setTimeout(() => this.connect(), RETRY_MS);
+      this.reconnectTimer = setTimeout(() => this.connect(), this.retryMs);
     });
 
     socket.addEventListener("error", () => {
@@ -135,11 +143,14 @@ class SignalKStream {
 
   /**
    * Updates the subscription path set (after a config reload) and
-   * reconnects with the new paths.
+   * reconnects with the new paths. The reconnect is immediate: this is
+   * a deliberate re-subscribe, not a link failure — sitting out the
+   * retry interval would pause data flow for no reason.
    * @param {string[]} paths
    */
   setPaths(paths) {
     this.paths = paths;
+    this.retryMs = 0;
     this.socket?.close();
   }
 

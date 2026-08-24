@@ -41,7 +41,7 @@ function delta(path, value, ts = Date.now()) {
 }
 
 describe("engine", () => {
-  test("off-anchor tile is neutral regardless of alarm feed (SPEC §5)", () => {
+  test("off-anchor tile is hidden entirely (SPEC §5, revised)", () => {
     const out = [];
     const e = createEngine(anchorConfig(), (tiles) => {
       out.push(tiles);
@@ -49,7 +49,24 @@ describe("engine", () => {
     e.onDelta(delta("navigation.state", "sailing"));
     e.onDelta(delta("notifications.anchor.alarm", true)); // tripped, but we're not anchored
     e.evaluate();
-    assert.strictEqual(out.at(-1)[0].state, "neutral");
+    // Inactive context: the tile is NOT in the output at all — not a
+    // dimmed neutral panel (decided against SPEC §5: too busy).
+    assert.strictEqual(out.at(-1).length, 0);
+  });
+
+  test("tile reappears when its context turns active", () => {
+    const out = [];
+    const e = createEngine(anchorConfig(), (tiles) => {
+      out.push(tiles);
+    });
+    e.onDelta(delta("navigation.state", "sailing"));
+    e.evaluate();
+    assert.strictEqual(out.at(-1).length, 0);
+    e.onDelta(delta("navigation.state", "anchored"));
+    e.onDelta(delta("notifications.anchor.alarm", true));
+    e.evaluate();
+    assert.strictEqual(out.at(-1).length, 1);
+    assert.strictEqual(out.at(-1)[0].state, "red");
   });
 
   test("at anchor with alarm tripped => red", () => {
@@ -115,7 +132,7 @@ describe("engine", () => {
           checks: [{ type: "banded", path: "owned", low: { warn: 0 } }],
         },
       ],
-      coverage: { candidates: ["unowned"], slots: 1 },
+      coverage: { candidates: ["unowned"], slots: 1, surfaceMs: 0 },
     };
     const out = [];
     const e = createEngine(cfg, (tiles, coverage) => {
@@ -129,6 +146,41 @@ describe("engine", () => {
     const last = out.at(-1);
     assert.strictEqual(last.coverage.length, 1);
     assert.strictEqual(last.coverage[0].path, "unowned");
+  });
+
+  test("coverage: every detected anomaly goes to the durable log, surfaced or not (SPEC §10)", () => {
+    const cfg = {
+      contexts: [],
+      tiles: [],
+      // One slot, zero dwell so both anomalies are immediately eligible.
+      coverage: { candidates: ["a", "b"], slots: 1, surfaceMs: 0 },
+    };
+    const logged = [];
+    const logStub = {
+      record: (ev) => logged.push(["opened", ev.path]),
+      clear: (path) => logged.push(["cleared", path]),
+    };
+    const e = createEngine(cfg, () => {}, { anomalyLog: logStub });
+    for (const p of ["a", "b"]) {
+      e.onDelta(delta(p, 15));
+      e.cache.setMeta(p, {
+        zones: [{ lower: 14, upper: 100, state: "warn" }],
+      });
+    }
+    e.evaluate();
+    // Both anomalies opened+logged even though only one surfaces.
+    assert.deepStrictEqual(logged, [
+      ["opened", "a"],
+      ["opened", "b"],
+    ]);
+    // Anomaly clears -> the clear window opens at the first tick where
+    // it's no longer detected, then fires once absence spans clearMs.
+    const base = Date.now();
+    e.onDelta(delta("a", 5, base)); // out of the warn zone -> not detected
+    e.cache.setMeta("a", { zones: [{ lower: 14, upper: 100, state: "warn" }] });
+    e.evaluate(base); // clear window opens for "a"
+    e.evaluate(base + 31_000); // 31s absent >= default 30s clearMs
+    assert.ok(logged.some(([t, p]) => t === "cleared" && p === "a"));
   });
 
   test("unwraps the { configuration, enabled } envelope so evaluation works on the wrapped form", () => {

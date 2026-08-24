@@ -196,4 +196,108 @@ describe("context predicates", () => {
       ),
     );
   });
+
+  test("degenerate combinator nodes fail closed, never vacuously true", () => {
+    const c = new PathCache();
+    c.set("a", 1);
+    // `allOf: []` is `[].every` — vacuously true — but must NOT light
+    // up a context chip forever just because the admin UI emitted an
+    // empty AND.
+    assert.ok(!evalPredicate({ allOf: [] }, c));
+    assert.ok(!evalPredicate({ anyOf: [] }, c));
+    // `not: {}` negates an empty node — same trap.
+    assert.ok(!evalPredicate({ not: {} }, c));
+    assert.ok(!evalPredicate({ not: { allOf: [] } }, c));
+    assert.ok(!evalPredicate({ allOf: [{}] }, c));
+    // whenMissing cannot resurrect a degenerate node — it governs
+    // absent *paths*, not malformed predicates.
+    assert.ok(!evalPredicate({ allOf: [], whenMissing: "true" }, c));
+    // A real comparator next to an empty combinator still evaluates.
+    assert.ok(
+      evalPredicate({ path: "a", compare: "equals", value: 1, allOf: [] }, c),
+    );
+    // Non-degenerate `not` keeps working.
+    assert.ok(
+      evalPredicate({ not: { path: "a", compare: "gt", value: 5 } }, c),
+    );
+  });
+
+  // The admin UI emits the leaf comparator AND every combinator key in
+  // one node (unused ones as junk: `not: { whenMissing: "false" }`,
+  // empty arrays, empty `between`). These tests use the exact shapes a
+  // real saved config carries.
+  test("flattened form: leaf + anyOf are OR alternatives", () => {
+    const c = new PathCache();
+    const atRest = {
+      path: "navigation.state",
+      compare: "equals",
+      value: "moored",
+      whenMissing: "false",
+      allOf: [],
+      anyOf: [
+        {
+          path: "navigation.state",
+          compare: "equals",
+          value: "anchored",
+          whenMissing: "false",
+        },
+      ],
+      not: { whenMissing: "false" },
+    };
+    c.set("navigation.state", "moored");
+    assert.ok(evalPredicate(atRest, c)); // via the leaf
+    c.set("navigation.state", "anchored");
+    assert.ok(evalPredicate(atRest, c)); // via the anyOf alternative
+    c.set("navigation.state", "sailing");
+    assert.ok(!evalPredicate(atRest, c));
+  });
+
+  test("flattened form: leaf + allOf are AND requirements", () => {
+    const c = new PathCache();
+    const acCompound = {
+      path: "electrical.venus.acPower",
+      compare: "gt",
+      value: "0",
+      whenMissing: "false",
+      allOf: [
+        {
+          path: "electrical.inverters.294.mode",
+          compare: "equals",
+          value: "on",
+          whenMissing: "false",
+        },
+      ],
+      anyOf: [],
+      not: { whenMissing: "false", between: {} },
+      between: {},
+    };
+    c.set("electrical.venus.acPower", 100);
+    c.set("electrical.inverters.294.mode", "on");
+    assert.ok(evalPredicate(acCompound, c));
+    c.set("electrical.inverters.294.mode", "off");
+    assert.ok(!evalPredicate(acCompound, c));
+    c.set("electrical.inverters.294.mode", "on");
+    c.set("electrical.venus.acPower", 0);
+    assert.ok(!evalPredicate(acCompound, c));
+  });
+
+  test("flattened form: pure leaf with junk combinators (every saved context)", () => {
+    const c = new PathCache();
+    const ctx = {
+      path: "navigation.state",
+      compare: "equals",
+      value: "moored",
+      whenMissing: "false",
+      allOf: [],
+      anyOf: [],
+      not: { whenMissing: "false" },
+    };
+    c.set("navigation.state", "moored");
+    assert.ok(evalPredicate(ctx, c));
+    c.set("navigation.state", "sailing");
+    assert.ok(!evalPredicate(ctx, c));
+    // ...and the junk `not` must not turn a non-matching node into
+    // !false = true.
+    assert.ok(!evalPredicate({ ...ctx, value: "anchored" }, c));
+  });
 });

@@ -185,6 +185,20 @@ describe("checks", () => {
       c2,
     );
     assert.strictEqual(r2.displayValue, "92%");
+    // Other inline units route through the shared formatter: symbol shown
+    // and SI-prefixed (3190 + "Wh" -> "3.19 kWh").
+    const c3 = cacheWith({ bank: 3190 });
+    const r3 = evalCheck(
+      {
+        type: "banded",
+        path: "bank",
+        display: true,
+        unit: "Wh",
+        low: { crit: 500 },
+      },
+      c3,
+    );
+    assert.strictEqual(r3.displayValue, "3.19 kWh");
   });
 
   test("differential: spread vs warn/crit", () => {
@@ -259,7 +273,10 @@ describe("checks", () => {
         {
           type: "stateMatch",
           path: "nav",
-          map: { sailing: "green", motoring: "amber" },
+          map: [
+            { value: "sailing", state: "green" },
+            { value: "motoring", state: "amber" },
+          ],
           default: "neutral",
         },
         c,
@@ -271,7 +288,7 @@ describe("checks", () => {
         {
           type: "stateMatch",
           path: "nav",
-          map: { sailing: "green" },
+          map: [{ value: "sailing", state: "green" }],
           default: "red",
         },
         cacheWith({ nav: "anchored" }),
@@ -287,12 +304,66 @@ describe("checks", () => {
         {
           type: "stateMatch",
           path: "mode",
-          map: { "charging-surplus": "opportunity" },
+          map: [{ value: "charging-surplus", state: "opportunity" }],
           default: "green",
         },
         c,
       ).state,
       "opportunity",
+    );
+  });
+
+  test("stateMatch: designated display shows the raw value as headline", () => {
+    const c = cacheWith({ status: "surplus" });
+    const r = evalCheck(
+      {
+        type: "stateMatch",
+        path: "status",
+        map: [{ value: "surplus", state: "opportunity" }],
+        display: true,
+      },
+      c,
+    );
+    assert.strictEqual(r.state, "opportunity");
+    assert.strictEqual(r.displayValue, "surplus");
+    // The default path=value reason is suppressed when the value is
+    // already the headline — it would restate it one line lower. An
+    // explicit reason still wins.
+    assert.strictEqual(r.reason, "");
+    assert.strictEqual(
+      evalCheck(
+        {
+          type: "stateMatch",
+          path: "status",
+          map: [{ value: "surplus", state: "opportunity" }],
+          display: true,
+          reason: "Energy surplus window",
+        },
+        c,
+      ).reason,
+      "Energy surplus window",
+    );
+    // Undesignated: no displayValue, and the path=value reason stays —
+    // it's the only place the value appears.
+    const plain = evalCheck({ type: "stateMatch", path: "status", map: [] }, c);
+    assert.strictEqual(plain.displayValue, undefined);
+    assert.strictEqual(plain.reason, "status=surplus");
+    // Stale display input: no displayValue (tile normalizes to "—",
+    // SPEC §3.4).
+    const stale = new PathCache();
+    stale.set("status", "surplus", Date.now() - 120000);
+    assert.strictEqual(
+      evalCheck(
+        {
+          type: "stateMatch",
+          path: "status",
+          map: [],
+          display: true,
+          staleMs: 60000,
+        },
+        stale,
+      ).displayValue,
+      undefined,
     );
   });
 

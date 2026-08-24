@@ -7,7 +7,9 @@
  * @file config.js */
 
 import { CHECK_TYPES } from "./checks.js";
+import { isEmptyPredicate } from "./context.js";
 import { collectPredicatePaths, unwrapConfig } from "./paths.js";
+import { TILE_STATES } from "./states.js";
 
 /** Max recursion depth for context predicate combinators (SPEC §9). */
 const MAX_PREDICATE_DEPTH = 2;
@@ -65,7 +67,10 @@ export function validateConfig(config) {
         `Context "${ctx.id}" nests predicates to depth ${depth} (max ${MAX_PREDICATE_DEPTH}); split into named contexts`,
       );
     }
-    if (!hasComparator(ctx.predicate) && !hasCombinator(ctx.predicate)) {
+    // Degenerate predicates (empty `allOf`/`not` — the admin UI emits
+    // these when a combinator is picked but never filled in) evaluate
+    // vacuously true, which would make the context permanently active.
+    if (isEmptyPredicate(ctx.predicate)) {
       errors.push(`Context "${ctx.id}" predicate is empty`);
     }
   }
@@ -101,10 +106,7 @@ export function validateConfig(config) {
       if (check.type === "compound") {
         if (!check.predicate) {
           errors.push(`Tile "${tile.id}" compound check has no predicate`);
-        } else if (
-          !hasComparator(check.predicate) &&
-          !hasCombinator(check.predicate)
-        ) {
+        } else if (isEmptyPredicate(check.predicate)) {
           errors.push(`Tile "${tile.id}" compound check predicate is empty`);
         } else {
           const depth = predicateDepth(check.predicate, 0);
@@ -114,6 +116,10 @@ export function validateConfig(config) {
             );
           }
         }
+      }
+      if (check.type === "stateMatch") {
+        const rowErrors = validateStateMatchMap(check.map || []);
+        for (const e of rowErrors) errors.push(`Tile "${tile.id}" ${e}`);
       }
       if (check.display) displayCount++;
     }
@@ -186,7 +192,7 @@ function checkTargetsOpportunity(check) {
         check.high?.critState === "opportunity"
       );
     case "stateMatch":
-      return Object.values(check.map || {}).some((s) => s === "opportunity");
+      return (check.map || []).some((e) => e?.state === "opportunity");
     case "notification":
       return Object.values(check.severityMap || {}).some(
         (s) => s === "opportunity",
@@ -219,7 +225,7 @@ function checkTargetsProblem(check) {
         isProblem(check.high?.critState)
       );
     case "stateMatch":
-      return Object.values(check.map || {}).some(isProblem);
+      return (check.map || []).some((e) => isProblem(e?.state));
     case "zone":
       return Object.values(check.severityMap || {}).some(isProblem);
     case "notification":
@@ -246,18 +252,35 @@ function checkTargetsProblem(check) {
 }
 
 /**
- * @param {object} pred
- * @returns {boolean}
+ * Validates a stateMatch check's map rows: every row needs a non-empty
+ * value string and a valid tile state; duplicate values are ambiguous
+ * (last row wins at evaluation) and flagged as errors.
+ *
+ * @param {Array<{value: string, state: string}>} map
+ * @returns {string[]} error messages
  */
-function hasComparator(pred) {
-  return Boolean(pred?.path && pred.compare);
-}
-/**
- * @param {object} pred
- * @returns {boolean}
- */
-function hasCombinator(pred) {
-  return Boolean(pred?.allOf || pred?.anyOf || pred?.not || pred?.between);
+function validateStateMatchMap(map) {
+  const errors = [];
+  const seen = new Set();
+  for (const [i, row] of map.entries()) {
+    if (!row || typeof row !== "object") {
+      errors.push(`map row ${i + 1} is not an object`);
+      continue;
+    }
+    if (typeof row.value !== "string" || row.value === "") {
+      errors.push(`map row ${i + 1} needs a non-empty value`);
+    } else if (seen.has(row.value)) {
+      errors.push(`map has duplicate rows for value "${row.value}"`);
+    } else {
+      seen.add(row.value);
+    }
+    if (!TILE_STATES.includes(row.state)) {
+      errors.push(
+        `map row for "${row.value}" has invalid state "${row.state}"`,
+      );
+    }
+  }
+  return errors;
 }
 
 export { collectPredicatePaths };

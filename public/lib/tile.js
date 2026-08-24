@@ -1,12 +1,15 @@
 /**
  * Tile aggregation (SPEC §3.2). A tile's state is the worst state among
- * its checks, `neutral` ranking below amber/red — but the tile is
- * `neutral` outright (skipping checks) when its context is inactive.
+ * its checks, `neutral` ranking below amber/red.
+ *
+ * Context gating is NOT done here: the engine omits inactive-context
+ * tiles from its output entirely (SPEC §5, revised) before this
+ * function runs. evalTile only handles the config-error case of a
+ * tile referencing an unknown context id.
  *
  * @file tile.js */
 
 import { evalCheck } from "./checks.js";
-import { evalPredicate } from "./context.js";
 import { worst } from "./states.js";
 import { formatDisplayValue, valueToNumber } from "./util.js";
 
@@ -14,50 +17,39 @@ import { formatDisplayValue, valueToNumber } from "./util.js";
  * Evaluates a single tile against the cache. Returns the structured tile
  * value (SPEC §6 output #1): `{ state, label, reason, displayValue, timestamp }`.
  *
- * Context gating (SPEC §5): if the tile's context is inactive, the tile is
- * `neutral` outright and NO checks run — regardless of what the
- * underlying paths are doing. When active, checks run normally, including
- * going stale/neutral or red if inputs disappear while the context is
- * active.
+ * Only called for tiles the engine has already decided to show: a tile
+ * whose context is currently inactive never reaches this function —
+ * the engine hides it outright (SPEC §5, revised: a dimmed
+ * off-duty tile is busywork on a helm display). When a context IS
+ * active, checks run normally, including going stale/neutral or red
+ * if inputs disappear while the context is active.
  *
  * Display value (SPEC §3.4): at most one check is designated `display`;
  * its formatted value becomes the tile's headline number. A stale check's
  * display value is replaced with an explicit "unknown" marker (dash), not
- * the frozen last reading. A context-inactive tile shows nothing (not a
- * dash) — the two neutral reasons must look different.
+ * the frozen last reading.
  *
  * @param {object} tile - `{ id, label, context?, checks, size? }`
  * @param {import("./staleness.js").PathCache} cache
- * @param {Map<string, object>} contexts - id → context object
+ * @param {Map<string, object>} contexts - id → context object (only
+ *   consulted for the unknown-context-id config error)
  * @param {number} [now]
  * @returns {{id: string, state: import("./checks.js").TileState, label: string, reason: string, displayValue?: string, timestamp: number}}
  */
 export function evalTile(tile, cache, contexts, now = Date.now()) {
   const timestamp = now;
 
-  // Context gating: inactive context => neutral outright, checks skipped.
-  if (tile.context) {
-    const ctx = contexts.get(tile.context);
-    if (!ctx) {
-      return {
-        id: tile.id,
-        state: "neutral",
-        label: tile.label || tile.id,
-        reason: `unknown context ${tile.context}`,
-        timestamp,
-      };
-    }
-    if (!evalPredicate(ctx.predicate, cache, now)) {
-      // Context inactive: neutral, NO display value, NO dash marker
-      // (SPEC §3.4 — "shows nothing, not a stale-looking dash").
-      return {
-        id: tile.id,
-        state: "neutral",
-        label: tile.label || tile.id,
-        reason: "context inactive",
-        timestamp,
-      };
-    }
+  // Config error (flagged by validation): tile references a context
+  // that doesn't exist. Render neutral with the reason so the problem
+  // is visible on screen, not silently hidden.
+  if (tile.context && !contexts.get(tile.context)) {
+    return {
+      id: tile.id,
+      state: "neutral",
+      label: tile.label || tile.id,
+      reason: `unknown context ${tile.context}`,
+      timestamp,
+    };
   }
 
   // Run all checks; worst state wins.
@@ -111,6 +103,11 @@ export function evalTile(tile, cache, contexts, now = Date.now()) {
  * the path's displayUnits metadata when available. Absent/stale paths
  * show "—". Footer is informational only and never affects tile state.
  *
+ * Unit resolution (so SI scaling applies, SPEC §3.4 readability): the
+ * path's published `displayUnits` metadata wins; the standard `meta.units`
+ * field serves as a symbol fallback; the entry's inline `unit` is the
+ * last resort. Any known symbol lets 3190 Wh render as "3.19 kWh".
+ *
  * @param {Array<{label?: string, path: string, unit?: string}>} [footer]
  * @param {import("./staleness.js").PathCache} cache
  * @returns {Array<{label: string, value: string}>}
@@ -130,10 +127,27 @@ function resolveFooter(footer, cache) {
       // Numeric values get display-unit conversion (K→°C, etc.).
       // Strings/booleans (e.g. state enums like "deployed") are shown as-is.
       value = Number.isFinite(n)
-        ? formatDisplayValue(n, meta?.displayUnits)
+        ? formatDisplayValue(n, footerUnits(meta, f.unit))
         : String(raw);
     }
     out.push({ label: f.label || f.path, value });
   }
   return out;
+}
+
+/**
+ * Unit source for footer formatting: published displayUnits metadata
+ * first (needs at least one usable field), then the standard `meta.units`
+ * field as a bare symbol, then the entry's inline `unit`.
+ *
+ * @param {object|undefined} meta
+ * @param {string} [inlineUnit]
+ * @returns {object|undefined}
+ */
+function footerUnits(meta, inlineUnit) {
+  const du = meta?.displayUnits;
+  if (du?.formula || du?.symbol || du?.displayFormat) return du;
+  if (meta?.units) return { symbol: meta.units };
+  if (inlineUnit) return { symbol: inlineUnit };
+  return undefined;
 }

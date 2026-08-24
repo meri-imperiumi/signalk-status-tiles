@@ -293,9 +293,23 @@ function evalAlarmGroup(check, cache, now) {
 
 /**
  * stateMatch: a path's discrete value looked up in an explicit
- * state→tile-state map, with a default for unmapped values (SPEC §3.3).
+ * value→state row list, with a default for unmapped values (SPEC §3.3).
  *
- * @param {object} check - `{ path, map: {value: state}, default }`
+ * The map is an ARRAY of `{value, state}` rows (not a free-form
+ * object): the admin UI's form renderer cannot render
+ * additionalProperties objects, but renders array rows fine. The last
+ * matching row wins — validation flags duplicates, so in practice at
+ * most one row matches.
+ *
+ * When designated `display`, the raw value itself is the tile's
+ * headline text (e.g. "surplus") — a status path has no number to
+ * format, the value IS the display (SPEC §3.4). In that case the
+ * default `path=value` reason is suppressed: it would restate the
+ * headline one line lower ("SURPLUS" over "…STATUS=SURPLUS"). An
+ * explicit `reason` still wins when the author wants one. Stale
+ * inputs produce no displayValue; the tile normalizes that to "—".
+ *
+ * @param {object} check - `{ path, map: [{value, state}], default, display?, reason? }`
  * @param {import("./staleness.js").PathCache} cache
  * @param {number} now
  * @returns {CheckResult}
@@ -307,9 +321,15 @@ function evalStateMatch(check, cache, now) {
   }
   const raw = unwrap(cache.value(check.path));
   const key = String(raw);
-  const map = check.map || {};
-  const state = key in map ? map[key] : (check.default ?? "neutral");
-  return { state, reason: check.reason || `${check.path}=${key}` };
+  let state = check.default ?? "neutral";
+  for (const entry of check.map || []) {
+    if (entry && String(entry.value) === key) state = entry.state;
+  }
+  return {
+    state,
+    reason: check.reason || (check.display ? "" : `${check.path}=${key}`),
+    displayValue: check.display ? key : undefined,
+  };
 }
 
 /**
@@ -555,6 +575,9 @@ function formatBandedValue(v, check, cache) {
   // metadata that the author wants shown as a percentage).
   if (check.unit === "%" || check.unit === "ratio")
     return `${Math.round(v * 100)}%`;
+  // Other inline units route through the shared formatter as a bare
+  // symbol, so SI scaling applies (3190 + "Wh" -> "3.19 kWh").
+  if (check.unit) return formatDisplayValue(v, { symbol: check.unit });
   return formatNum(v);
 }
 

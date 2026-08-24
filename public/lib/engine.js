@@ -10,7 +10,7 @@
  * @file engine.js */
 
 import { evalPredicate } from "./context.js";
-import { claimedPaths, detectAnomalies, rankAndAssign } from "./coverage.js";
+import { AnomalyTracker, claimedPaths, detectAnomalies } from "./coverage.js";
 import { unwrapConfig } from "./paths.js";
 import { DEFAULT_STALE_MS, PathCache } from "./staleness.js";
 import { evalTile } from "./tile.js";
@@ -22,8 +22,12 @@ import { evalTile } from "./tile.js";
  * @param {(tiles: Array, coverage: Array, activeContexts: Array<{id: string, label: string}>) => void} [onEval] - called on
  *   every re-evaluation with the structured tile outputs, surfaced
  *   coverage anomalies, and the currently-active contexts (chrome bar)
+ * @param {object} [options]
+ * @param {import("./anomaly-log.js").AnomalyLog} [options.anomalyLog] - durable log for
+ *   coverage anomalies (SPEC §10); every detected anomaly is recorded,
+ *   surfaced or not. Absent => no logging.
  */
-export function createEngine(config, onEval) {
+export function createEngine(config, onEval, options = {}) {
   const cfg = unwrapConfig(config);
   const cache = new PathCache();
   const contexts = new Map((cfg?.contexts || []).map((c) => [c.id, c]));
@@ -41,8 +45,12 @@ export function createEngine(config, onEval) {
     })),
   }));
 
-  /** Coverage anomaly first-seen timestamps for ranking hysteresis. */
-  const firstSeen = new Map();
+  /** Coverage hysteresis/ranking state (SPEC §10) + durable log. */
+  const tracker = new AnomalyTracker({
+    surfaceMs: cfg?.coverage?.surfaceMs,
+    clearMs: cfg?.coverage?.clearMs,
+  });
+  const anomalyLog = options.anomalyLog ?? null;
   const slotCount = cfg?.coverage?.slots ?? 1;
 
   /**
@@ -78,9 +86,20 @@ export function createEngine(config, onEval) {
    * @param {number} [now]
    */
   function evaluate(now = Date.now()) {
-    const tileOut = tilesWithDefaults.map((t) =>
-      evalTile(t, cache, contexts, now),
-    );
+    // Context gating (SPEC §5, deliberately revised): a tile whose
+    // context is currently inactive is OMITTED from the output
+    // entirely — not rendered neutral. A helm display showing every
+    // off-duty tile as a dimmed panel gets too busy; the tile
+    // reappears (with fresh evaluation) the moment its context turns
+    // active. Tiles with no context, or referencing an unknown
+    // context id (a config error, flagged by validation), always
+    // evaluate.
+    const tileOut = [];
+    for (const t of tilesWithDefaults) {
+      const ctx = t.context ? contexts.get(t.context) : null;
+      if (ctx && !evalPredicate(ctx.predicate, cache, now)) continue;
+      tileOut.push(evalTile(t, cache, contexts, now));
+    }
 
     // Active contexts for the chrome bar: every declared context whose
     // predicate currently holds (label falls back to id). Rendered by
@@ -98,14 +117,12 @@ export function createEngine(config, onEval) {
     const inactiveContextPaths = computeInactiveContextPaths(now);
     const claimed = claimedPaths(cfg, inactiveContextPaths);
     const anomalies = detectAnomalies(cfg, cache, claimed, now);
-    // Update firstSeen for hysteresis/ranking.
-    for (const a of anomalies)
-      if (!firstSeen.has(a.path)) firstSeen.set(a.path, now);
-    // Drop firstSeen for anomalies that have cleared.
-    for (const path of [...firstSeen.keys()]) {
-      if (!anomalies.some((a) => a.path === path)) firstSeen.delete(path);
+    const { surfaced, events } = tracker.update(anomalies, slotCount, now);
+    // Durable log: every episode is recorded, surfaced or not (SPEC §10).
+    for (const ev of events) {
+      if (ev.type === "opened") anomalyLog?.record(ev, now);
+      else anomalyLog?.clear(ev.path, ev.clearedAt);
     }
-    const { surfaced } = rankAndAssign(anomalies, firstSeen, slotCount, now);
 
     onEval?.(tileOut, surfaced, activeContexts);
   }

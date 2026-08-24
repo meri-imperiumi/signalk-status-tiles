@@ -143,6 +143,42 @@ describe("config validation", () => {
     );
   });
 
+  test("degenerate combinator predicates are errors, not silent always-on", () => {
+    // The admin UI emits `allOf: []` / `not: {}` when a combinator is
+    // picked but never filled in. Vacuously true at evaluation — flag
+    // them so the user fixes the form instead of wondering why every
+    // context chip shows.
+    const degenerate = {
+      contexts: [
+        { id: "c1", predicate: { allOf: [] } },
+        { id: "c2", predicate: { not: {} } },
+      ],
+      tiles: [],
+    };
+    const errors = validateConfig(degenerate).errors;
+    assert.ok(
+      errors.some((e) => e.includes('Context "c1" predicate is empty')),
+    );
+    assert.ok(
+      errors.some((e) => e.includes('Context "c2" predicate is empty')),
+    );
+
+    const compound = {
+      tiles: [
+        {
+          id: "x",
+          label: "X",
+          checks: [{ type: "compound", predicate: { anyOf: [{}] } }],
+        },
+      ],
+    };
+    assert.ok(
+      validateConfig(compound).errors.some((e) =>
+        e.includes("compound check predicate is empty"),
+      ),
+    );
+  });
+
   test("tile mixing problem and opportunity checks warns (SPEC §2.1)", () => {
     // One check targets opportunity, another targets a problem state →
     // straddle, should be split into two tiles.
@@ -193,5 +229,35 @@ describe("config validation", () => {
       !warnings.some((e) => e.includes("split into two tiles")),
       "single asymmetric check should not warn about straddling",
     );
+  });
+
+  test("stateMatch map rows are validated: bad rows and duplicates", () => {
+    const cfg = {
+      tiles: [
+        {
+          id: "s",
+          label: "S",
+          checks: [
+            {
+              type: "stateMatch",
+              path: "p",
+              map: [
+                { value: "", state: "green" },
+                { value: "surplus", state: "banana" },
+                { value: "surplus", state: "opportunity" },
+                { value: "ok" },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const errors = validateConfig(cfg).errors;
+    assert.ok(errors.some((e) => e.includes("needs a non-empty value")));
+    assert.ok(errors.some((e) => e.includes('invalid state "banana"')));
+    assert.ok(
+      errors.some((e) => e.includes('duplicate rows for value "surplus"')),
+    );
+    assert.ok(errors.some((e) => e.includes('invalid state "undefined"')));
   });
 });

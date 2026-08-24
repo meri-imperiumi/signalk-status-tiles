@@ -50,13 +50,19 @@ describe("schema", () => {
       banded.properties.high.properties.warnState.enum.includes("opportunity"),
     );
 
-    // stateMatch map values may target opportunity.
+    // stateMatch map rows may target opportunity. Rows (array), not a
+    // free-form object: the admin UI can't render additionalProperties.
     const stateMatch = byType("stateMatch");
+    assert.equal(stateMatch.properties.map.type, "array");
     assert.ok(
-      stateMatch.properties.map.additionalProperties.enum.includes(
+      stateMatch.properties.map.items.properties.state.enum.includes(
         "opportunity",
       ),
     );
+    // stateMatch offers the display-value designation like every other
+    // check type (SPEC §3.4).
+    assert.ok(stateMatch.properties.display);
+    assert.equal(stateMatch.properties.display.type, "boolean");
 
     // notification severityMap may target opportunity (§7.1 motivating case).
     const notification = byType("notification");
