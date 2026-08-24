@@ -142,4 +142,56 @@ describe("config validation", () => {
       ),
     );
   });
+
+  test("tile mixing problem and opportunity checks warns (SPEC §2.1)", () => {
+    // One check targets opportunity, another targets a problem state →
+    // straddle, should be split into two tiles.
+    const cfg = {
+      tiles: [
+        {
+          id: "mixed",
+          label: "Mixed",
+          checks: [
+            { type: "boolean", path: "alarm" }, // red (problem)
+            {
+              type: "banded",
+              path: "soc",
+              high: { warn: 0.95, warnState: "opportunity" },
+            },
+          ],
+        },
+      ],
+    };
+    assert.ok(
+      validateConfig(cfg).warnings.some((e) =>
+        e.includes("split into two tiles"),
+      ),
+    );
+  });
+
+  test("single asymmetric banded check is NOT a straddle (SPEC §2.1)", () => {
+    // One banded check with low→red and high→opportunity is the intended
+    // single-asymmetric-metric case, not a multi-check straddle.
+    const cfg = {
+      tiles: [
+        {
+          id: "outlook",
+          label: "Energy outlook",
+          checks: [
+            {
+              type: "banded",
+              path: "soc",
+              low: { crit: 0.2, critState: "red" },
+              high: { warn: 0.95, warnState: "opportunity" },
+            },
+          ],
+        },
+      ],
+    };
+    const { warnings } = validateConfig(cfg);
+    assert.ok(
+      !warnings.some((e) => e.includes("split into two tiles")),
+      "single asymmetric check should not warn about straddling",
+    );
+  });
 });

@@ -77,6 +77,65 @@ describe("checks", () => {
     );
   });
 
+  test("banded: per-side configurable states — high side as opportunity (SPEC §2.1, §3.3)", () => {
+    // Asymmetric energy-forecast metric: low SoC = deficit (problem),
+    // high SoC = surplus (opportunity, not a warning).
+    const c = cacheWith({ soc: 0.97 });
+    const r = evalCheck(
+      {
+        type: "banded",
+        path: "soc",
+        high: { warn: 0.95, warnState: "opportunity" },
+      },
+      c,
+    );
+    assert.strictEqual(r.state, "opportunity");
+    assert.strictEqual(r.reason, "soc above 0.95");
+  });
+
+  test("banded: low and high can target different branches on one check", () => {
+    // A single banded check is the intended single-asymmetric-metric
+    // case (SPEC §2.1): low→red deficit, high→opportunity surplus.
+    const low = cacheWith({ soc: 0.1 });
+    assert.strictEqual(
+      evalCheck(
+        {
+          type: "banded",
+          path: "soc",
+          low: { crit: 0.2, critState: "red" },
+          high: { warn: 0.95, warnState: "opportunity" },
+        },
+        low,
+      ).state,
+      "red",
+    );
+    const high = cacheWith({ soc: 0.99 });
+    assert.strictEqual(
+      evalCheck(
+        {
+          type: "banded",
+          path: "soc",
+          low: { crit: 0.2, critState: "red" },
+          high: { warn: 0.95, warnState: "opportunity" },
+        },
+        high,
+      ).state,
+      "opportunity",
+    );
+  });
+
+  test("banded: defaults preserve historical warn→amber / crit→red", () => {
+    const c = cacheWith({ soc: 0.15, v: 14.9 });
+    assert.strictEqual(
+      evalCheck({ type: "banded", path: "soc", low: { warn: 0.3 } }, c).state,
+      "amber",
+    );
+    assert.strictEqual(
+      evalCheck({ type: "banded", path: "v", high: { crit: 14.4 } }, c).state,
+      "red",
+    );
+  });
+
   test("banded: display value formatted by unit", () => {
     const c = cacheWith({ soc: 0.92 });
     const r = evalCheck(
@@ -221,6 +280,22 @@ describe("checks", () => {
     );
   });
 
+  test("stateMatch: map values may target opportunity (SPEC §2.1, §3.3)", () => {
+    const c = cacheWith({ mode: "charging-surplus" });
+    assert.strictEqual(
+      evalCheck(
+        {
+          type: "stateMatch",
+          path: "mode",
+          map: { "charging-surplus": "opportunity" },
+          default: "green",
+        },
+        c,
+      ).state,
+      "opportunity",
+    );
+  });
+
   test("zone: reads metadata zones; severity map collapses 5->4", () => {
     const meta = {
       zones: [
@@ -293,7 +368,10 @@ describe("checks", () => {
     assert.strictEqual(r.reason, "Low voltage 11.9V");
   });
 
-  test("notification: per-check severityMap can remap a positive warn to green (SPEC §7.1)", () => {
+  test("notification: per-check severityMap can remap a positive warn to opportunity (SPEC §2.1, §7.1)", () => {
+    // A plugin reusing WARN for good news (an energy-surplus notice)
+    // should map to opportunity, not amber (misrepresents good news) or
+    // green (discards the actionable "run the watermaker" signal).
     const c = cacheWith({
       "notifications.surplus": { state: "warn", message: "1.3kWh surplus" },
     });
@@ -301,11 +379,11 @@ describe("checks", () => {
       {
         type: "notification",
         path: "notifications.surplus",
-        severityMap: { warn: "green" },
+        severityMap: { warn: "opportunity" },
       },
       c,
     );
-    assert.strictEqual(r.state, "green");
+    assert.strictEqual(r.state, "opportunity");
   });
 
   test("agreement: equal -> green; mismatch -> amber by default; configurable", () => {
@@ -332,6 +410,27 @@ describe("checks", () => {
         c2,
       ).state,
       "red",
+    );
+  });
+
+  test("agreement: mismatch may target opportunity (missed upside, SPEC §3.3, §7.1)", () => {
+    // FLINsail-style: should have been deployed and wasn't — missed
+    // upside, not risk, so opportunity is the honest read.
+    const c = cacheWith({
+      recommendedState: "deployed",
+      detectedState: "stowed",
+    });
+    assert.strictEqual(
+      evalCheck(
+        {
+          type: "agreement",
+          path: "recommendedState",
+          path2: "detectedState",
+          mismatchState: "opportunity",
+        },
+        c,
+      ).state,
+      "opportunity",
     );
   });
 
@@ -491,6 +590,26 @@ describe("checks", () => {
         c,
       ).state,
       "red",
+    );
+  });
+
+  test("compound: state may target opportunity (open beneficial window)", () => {
+    const c = cacheWith({ solar: 800, batteryFull: 1 });
+    assert.strictEqual(
+      evalCheck(
+        {
+          type: "compound",
+          state: "opportunity",
+          predicate: {
+            allOf: [
+              { path: "solar", compare: "gt", value: "500" },
+              { path: "batteryFull", compare: "equals", value: "1" },
+            ],
+          },
+        },
+        c,
+      ).state,
+      "opportunity",
     );
   });
 

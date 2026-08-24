@@ -230,4 +230,51 @@ describe("tile aggregation", () => {
     assert.strictEqual(t.footer[0].value, "deployed");
     assert.strictEqual(t.footer[1].value, "deployed");
   });
+
+  test("opportunity from one check with green others -> opportunity (SPEC §2.1)", () => {
+    const c = new PathCache();
+    c.set("soc", 0.97);
+    c.set("ok", 1);
+    const t = evalTile(
+      {
+        id: "t",
+        label: "T",
+        checks: [
+          { type: "boolean", path: "ok", badWhen: false }, // green
+          {
+            type: "banded",
+            path: "soc",
+            high: { warn: 0.95, warnState: "opportunity" },
+          },
+        ],
+      },
+      c,
+      new Map(),
+    );
+    assert.strictEqual(t.state, "opportunity");
+  });
+
+  test("problem beats opportunity in worst-of aggregation (SPEC §2.1)", () => {
+    const c = new PathCache();
+    c.set("soc", 0.97);
+    c.set("alarm", true);
+    const t = evalTile(
+      {
+        id: "t",
+        label: "T",
+        checks: [
+          { type: "boolean", path: "alarm" }, // red
+          {
+            type: "banded",
+            path: "soc",
+            high: { warn: 0.95, warnState: "opportunity" },
+          },
+        ],
+      },
+      c,
+      new Map(),
+    );
+    // A problem (red) always outranks a chance (opportunity).
+    assert.strictEqual(t.state, "red");
+  });
 });

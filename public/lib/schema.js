@@ -8,6 +8,8 @@
  *
  * @file schema.js */
 
+import { PROBLEM_TARGET_STATES, TARGET_STATES, TILE_STATES } from "./states.js";
+
 /** Global staleness default + per-tile overrides. */
 const staleMsField = (title) => ({
   type: "integer",
@@ -21,7 +23,7 @@ const staleStateField = {
   title: "State when stale",
   description:
     "What this check resolves to when its input is stale/absent (SPEC §4)",
-  enum: ["green", "amber", "red", "neutral"],
+  enum: TILE_STATES,
   default: "neutral",
 };
 
@@ -166,25 +168,54 @@ const checkVariants = [
   },
   {
     title: "Banded",
-    description: "Numeric value against warn/crit thresholds (low and/or high)",
+    description:
+      "Numeric value against warn/crit thresholds on either or both sides. Each side's target states are independently configurable — low is typically a deficit (amber/red) and high may be a surplus (opportunity), not both 'bad' (SPEC §3.3, §2.1).",
     type: "object",
     properties: {
       type: { type: "string", const: "banded" },
       path: { type: "string", title: "Signal K path" },
       low: {
         type: "object",
-        title: "Low thresholds",
+        title: "Low side (value too low)",
+        description:
+          "Fires when the value drops below a threshold. Typically a deficit/problem side — warn→amber, crit→red.",
         properties: {
           warn: { type: "number", title: "Warn below" },
           crit: { type: "number", title: "Critical below" },
+          warnState: {
+            type: "string",
+            title: "State when at/below warn",
+            enum: TARGET_STATES,
+            default: "amber",
+          },
+          critState: {
+            type: "string",
+            title: "State when below crit",
+            enum: TARGET_STATES,
+            default: "red",
+          },
         },
       },
       high: {
         type: "object",
-        title: "High thresholds",
+        title: "High side (value too high)",
+        description:
+          "Fires when the value rises above a threshold. May be a problem (overvoltage → red) OR an opportunity (forecast surplus → opportunity), depending on the metric.",
         properties: {
           warn: { type: "number", title: "Warn above" },
           crit: { type: "number", title: "Critical above" },
+          warnState: {
+            type: "string",
+            title: "State when at/above warn",
+            enum: TARGET_STATES,
+            default: "amber",
+          },
+          critState: {
+            type: "string",
+            title: "State when above crit",
+            enum: TARGET_STATES,
+            default: "red",
+          },
         },
       },
       unit: {
@@ -251,13 +282,13 @@ const checkVariants = [
         title: "Value → state map",
         additionalProperties: {
           type: "string",
-          enum: ["green", "amber", "red", "neutral"],
+          enum: TILE_STATES,
         },
       },
       default: {
         type: "string",
         title: "Default for unmapped values",
-        enum: ["green", "amber", "red", "neutral"],
+        enum: TILE_STATES,
         default: "neutral",
       },
       reason: reasonField,
@@ -278,31 +309,31 @@ const checkVariants = [
         type: "object",
         title: "Zone state → tile state (optional override)",
         description:
-          "Defaults map nominal/alert→green, warn→amber, alarm/emergency→red. Override per-check (e.g. to remap a positive 'warn' notice to green).",
+          "Defaults map nominal/alert→green, warn→amber, alarm/emergency→red. SK's zone vocabulary is a badness scale with no native 'good/opportunity' concept, so opportunity is not offered here (SPEC §3.3); use a banded or notification check for asymmetric/opportunity metrics.",
         properties: {
           nominal: {
             type: "string",
-            enum: ["green", "amber", "red", "neutral"],
+            enum: [...PROBLEM_TARGET_STATES, "neutral"],
             default: "green",
           },
           alert: {
             type: "string",
-            enum: ["green", "amber", "red", "neutral"],
+            enum: [...PROBLEM_TARGET_STATES, "neutral"],
             default: "green",
           },
           warn: {
             type: "string",
-            enum: ["green", "amber", "red", "neutral"],
+            enum: [...PROBLEM_TARGET_STATES, "neutral"],
             default: "amber",
           },
           alarm: {
             type: "string",
-            enum: ["green", "amber", "red", "neutral"],
+            enum: [...PROBLEM_TARGET_STATES, "neutral"],
             default: "red",
           },
           emergency: {
             type: "string",
-            enum: ["green", "amber", "red", "neutral"],
+            enum: [...PROBLEM_TARGET_STATES, "neutral"],
             default: "red",
           },
         },
@@ -343,30 +374,32 @@ const checkVariants = [
       severityMap: {
         type: "object",
         title: "Notification state → tile state",
+        description:
+          "Map the upstream plugin's severity to a tile state. Defaults map warn→amber, alarm/emergency→red. A plugin that reuses WARN for good news (e.g. an energy-surplus notice) should map that to opportunity, not amber — see SPEC §2.1, §7.1.",
         properties: {
           normal: {
             type: "string",
-            enum: ["green", "amber", "red", "neutral"],
+            enum: TILE_STATES,
             default: "green",
           },
           alert: {
             type: "string",
-            enum: ["green", "amber", "red", "neutral"],
+            enum: TILE_STATES,
             default: "green",
           },
           warn: {
             type: "string",
-            enum: ["green", "amber", "red", "neutral"],
+            enum: TILE_STATES,
             default: "amber",
           },
           alarm: {
             type: "string",
-            enum: ["green", "amber", "red", "neutral"],
+            enum: TILE_STATES,
             default: "red",
           },
           emergency: {
             type: "string",
-            enum: ["green", "amber", "red", "neutral"],
+            enum: TILE_STATES,
             default: "red",
           },
         },
@@ -388,8 +421,10 @@ const checkVariants = [
       mismatchState: {
         type: "string",
         title: "State on mismatch",
-        enum: ["green", "amber", "red", "neutral"],
+        enum: TARGET_STATES,
         default: "amber",
+        description:
+          "Typically amber for risk, but opportunity is the honest read when the mismatch is missed upside rather than risk (e.g. a deployable that should have been deployed — SPEC §3.3, §7.1).",
       },
       display: displayField,
       reason: reasonField,
@@ -408,10 +443,10 @@ const checkVariants = [
       state: {
         type: "string",
         title: "State when predicate is true",
-        enum: ["green", "amber", "red", "neutral"],
+        enum: TARGET_STATES,
         default: "amber",
         description:
-          "What the tile shows when the predicate matches (default amber). Green when it doesn't.",
+          "What the tile shows when the predicate matches (default amber). Green when it doesn't. Use opportunity when the condition represents an open beneficial window rather than a problem (SPEC §2.1).",
       },
       predicate: {
         ...predicateSchema(),
@@ -553,30 +588,32 @@ export function buildSchema() {
           severityMap: {
             type: "object",
             title: "Zone state → tile state (for coverage)",
+            description:
+              "Coverage surfaces unclaimed problem states only — opportunity is out of scope (SPEC §2.1, §10).",
             properties: {
               nominal: {
                 type: "string",
-                enum: ["green", "amber", "red", "neutral"],
+                enum: [...PROBLEM_TARGET_STATES, "neutral"],
                 default: "green",
               },
               alert: {
                 type: "string",
-                enum: ["green", "amber", "red", "neutral"],
+                enum: [...PROBLEM_TARGET_STATES, "neutral"],
                 default: "green",
               },
               warn: {
                 type: "string",
-                enum: ["green", "amber", "red", "neutral"],
+                enum: [...PROBLEM_TARGET_STATES, "neutral"],
                 default: "amber",
               },
               alarm: {
                 type: "string",
-                enum: ["green", "amber", "red", "neutral"],
+                enum: [...PROBLEM_TARGET_STATES, "neutral"],
                 default: "red",
               },
               emergency: {
                 type: "string",
-                enum: ["green", "amber", "red", "neutral"],
+                enum: [...PROBLEM_TARGET_STATES, "neutral"],
                 default: "red",
               },
             },

@@ -16,6 +16,10 @@ const STATE_HUE = {
   green: 130, // emissive green
   amber: 38, // warm amber
   red: 0, // alert red
+  // SPEC §2.1/§11: opportunity is its own branch, not a rung on the
+  // green→amber→red ramp. A cyan/teal hue reads as "different in kind"
+  // rather than a milder amber or bonus green.
+  opportunity: 190,
 };
 
 class StTileGrid extends HTMLElement {
@@ -160,6 +164,8 @@ class StTileGrid extends HTMLElement {
     for (const t of list || []) {
       const tile = document.createElement("div");
       const isAlarm = t.state === "amber" || t.state === "red";
+      // opportunity is a lit, noticed state but never an alarm/pulse
+      // (SPEC §2.1: it ranks below amber/red for urgency).
       tile.className = `tile ${t.state === "neutral" ? "neutral" : "lit"} ${isAlarm ? "alarm" : ""}`;
       if (STATE_HUE[t.state] != null)
         tile.style.setProperty("--hue", STATE_HUE[t.state]);

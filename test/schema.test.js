@@ -35,4 +35,57 @@ describe("schema", () => {
     assert.ok(zone, "expected a zone check variant");
     assert.ok(zone.description.includes("just give a path"));
   });
+
+  test("opportunity is offered to banded/stateMatch/notification/agreement/compound but NOT zone (SPEC §2.1, §3.3)", () => {
+    const s = buildSchema();
+    const variants = s.properties.tiles.items.properties.checks.items.oneOf;
+    const byType = (t) => variants.find((c) => c.properties?.type?.const === t);
+
+    // banded: per-side warnState/critState include opportunity.
+    const banded = byType("banded");
+    assert.ok(
+      banded.properties.low.properties.warnState.enum.includes("opportunity"),
+    );
+    assert.ok(
+      banded.properties.high.properties.warnState.enum.includes("opportunity"),
+    );
+
+    // stateMatch map values may target opportunity.
+    const stateMatch = byType("stateMatch");
+    assert.ok(
+      stateMatch.properties.map.additionalProperties.enum.includes(
+        "opportunity",
+      ),
+    );
+
+    // notification severityMap may target opportunity (§7.1 motivating case).
+    const notification = byType("notification");
+    assert.ok(
+      notification.properties.severityMap.properties.warn.enum.includes(
+        "opportunity",
+      ),
+    );
+
+    // agreement mismatchState may target opportunity.
+    const agreement = byType("agreement");
+    assert.ok(agreement.properties.mismatchState.enum.includes("opportunity"));
+
+    // compound state may target opportunity.
+    const compound = byType("compound");
+    assert.ok(compound.properties.state.enum.includes("opportunity"));
+
+    // zone: opportunity is NOT offered (SK zone vocab is a badness scale).
+    const zone = byType("zone");
+    assert.ok(
+      !zone.properties.severityMap.properties.warn.enum.includes("opportunity"),
+      "zone must not offer opportunity (SPEC §3.3)",
+    );
+
+    // coverage severityMap likewise excludes opportunity (SPEC §2.1, §10).
+    const cov = s.properties.coverage.properties.severityMap;
+    assert.ok(
+      !cov.properties.warn.enum.includes("opportunity"),
+      "coverage must not offer opportunity (SPEC §2.1)",
+    );
+  });
 });

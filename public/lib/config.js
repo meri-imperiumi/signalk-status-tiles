@@ -122,9 +122,127 @@ export function validateConfig(config) {
         `Tile "${tile.id}" designates ${displayCount} display checks; at most one (SPEC §3.4)`,
       );
     }
+    // SPEC §2.1: a tile's checks must not straddle the problem and
+    // opportunity branches simultaneously. A single asymmetric check on
+    // one metric (e.g. a banded check whose low side is a deficit and
+    // high side is a surplus) is the intended single-tile case and is
+    // NOT a straddle. The straddle is multiple checks producing
+    // different branches at once from unrelated paths — a real
+    // ambiguity that should be split into two tiles. We surface a
+    // warning (not a hard error, since worst() still resolves to a
+    // defined single state) when one check explicitly targets
+    // opportunity and another explicitly targets a problem state.
+    if (tileStraddlesBranches(tile.checks || [])) {
+      warnings.push(
+        `Tile "${tile.id}" mixes problem-state and opportunity checks on one tile; split into two tiles (SPEC §2.1)`,
+      );
+    }
   }
 
   return { errors, warnings };
+}
+
+/**
+ * Whether a tile's checks straddle the problem and opportunity branches
+ * (SPEC §2.1). True only when there are at least two checks, one
+ * explicitly targeting `opportunity` and another explicitly targeting a
+ * problem state (`amber`/`red`). A single check that mixes both within
+ * itself (e.g. a banded check with low→red and high→opportunity) is the
+ * intended single-asymmetric-metric case and is NOT a straddle.
+ *
+ * Inspects the config-supplied target-state fields per check type.
+ * `zone` is excluded from opportunity entirely (SPEC §3.3), so it can
+ * never contribute the opportunity side.
+ *
+ * @param {object[]} checks
+ * @returns {boolean}
+ */
+function tileStraddlesBranches(checks) {
+  if (!Array.isArray(checks) || checks.length < 2) return false;
+  let hasOpportunity = false;
+  let hasProblem = false;
+  for (const c of checks) {
+    const opp = checkTargetsOpportunity(c);
+    const prob = checkTargetsProblem(c);
+    if (opp) hasOpportunity = true;
+    if (prob) hasProblem = true;
+  }
+  return hasOpportunity && hasProblem;
+}
+
+/**
+ * Whether a single check's configured target states include `opportunity`.
+ * @param {object} check
+ * @returns {boolean}
+ */
+function checkTargetsOpportunity(check) {
+  if (!check || typeof check !== "object") return false;
+  switch (check.type) {
+    case "banded":
+      return (
+        check.low?.warnState === "opportunity" ||
+        check.low?.critState === "opportunity" ||
+        check.high?.warnState === "opportunity" ||
+        check.high?.critState === "opportunity"
+      );
+    case "stateMatch":
+      return Object.values(check.map || {}).some((s) => s === "opportunity");
+    case "notification":
+      return Object.values(check.severityMap || {}).some(
+        (s) => s === "opportunity",
+      );
+    case "agreement":
+      return check.mismatchState === "opportunity";
+    case "compound":
+      return check.state === "opportunity";
+    // zone: cannot produce opportunity (SPEC §3.3)
+    default:
+      return false;
+  }
+}
+
+/**
+ * Whether a single check's configured target states include a problem
+ * severity (`amber`/`red`). Used for the §2.1 straddle check.
+ * @param {object} check
+ * @returns {boolean}
+ */
+function checkTargetsProblem(check) {
+  if (!check || typeof check !== "object") return false;
+  const isProblem = (s) => s === "amber" || s === "red";
+  switch (check.type) {
+    case "banded":
+      return (
+        isProblem(check.low?.warnState) ||
+        isProblem(check.low?.critState) ||
+        isProblem(check.high?.warnState) ||
+        isProblem(check.high?.critState)
+      );
+    case "stateMatch":
+      return Object.values(check.map || {}).some(isProblem);
+    case "zone":
+      return Object.values(check.severityMap || {}).some(isProblem);
+    case "notification":
+      return Object.values(check.severityMap || {}).some(isProblem);
+    case "agreement":
+      return isProblem(check.mismatchState);
+    case "compound":
+      return isProblem(check.state);
+    case "alarmGroup":
+      return true; // alarmGroup is inherently problem-oriented (red/amber)
+    case "boolean":
+      // boolean maps truthiness to red (badWhen default true) or green;
+      // it targets a problem state unless explicitly inverted to
+      // badWhen:false (which makes true→green, false→red — still a
+      // problem check, just flipped polarity). Either way it's a
+      // problem-branch check.
+      return true;
+    case "differential":
+      // threshold checks default to amber/red on a breach.
+      return true;
+    default:
+      return false;
+  }
 }
 
 /**

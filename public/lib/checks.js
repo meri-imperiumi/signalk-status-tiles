@@ -30,7 +30,7 @@ export const CHECK_TYPES = new Set([
 ]);
 
 /**
- * @typedef {"green"|"amber"|"red"|"neutral"} TileState
+ * @typedef {"green"|"amber"|"red"|"neutral"|"opportunity"} TileState
  * @typedef {{state: TileState, reason: string, displayValue?: string}} CheckResult
  */
 
@@ -160,19 +160,29 @@ function evalBanded(check, cache, now) {
   if (!Number.isFinite(v)) {
     return { state: "neutral", reason: `${check.path} non-numeric` };
   }
+  // Each side's warn/crit target state is independently configurable
+  // (SPEC §3.3, §2.1): low is typically a deficit (amber/red) and high
+  // may be a surplus (opportunity), not both 'bad'. Defaults preserve
+  // the historical behavior: warn→amber, crit→red. Crit beats warn
+  // regardless of side; within a tier, high is checked before low for
+  // deterministic reason text (matches the prior ordering).
+  const lowWarnState = check.low?.warnState || "amber";
+  const lowCritState = check.low?.critState || "red";
+  const highWarnState = check.high?.warnState || "amber";
+  const highCritState = check.high?.critState || "red";
   let state = "green";
   let reason = check.reason || check.path;
   if (check.high?.crit != null && v > check.high.crit) {
-    state = "red";
+    state = highCritState;
     reason = `${check.path} above ${check.high.crit}`;
   } else if (check.low?.crit != null && v < check.low.crit) {
-    state = "red";
+    state = lowCritState;
     reason = `${check.path} below ${check.low.crit}`;
   } else if (check.high?.warn != null && v > check.high.warn) {
-    state = "amber";
+    state = highWarnState;
     reason = `${check.path} above ${check.high.warn}`;
   } else if (check.low?.warn != null && v < check.low.warn) {
-    state = "amber";
+    state = lowWarnState;
     reason = `${check.path} below ${check.low.warn}`;
   }
   return {
