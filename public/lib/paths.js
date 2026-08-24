@@ -107,6 +107,9 @@ export function collectPaths(config) {
   }
   for (const tile of cfg?.tiles || []) {
     for (const check of tile?.checks || []) collectCheckPaths(check, out);
+    for (const f of tile?.footer || []) {
+      if (f?.path) out.add(f.path);
+    }
   }
   // Coverage candidates: explicit include-list/patterns only (SPEC §10).
   // Patterns are not literal paths here; only concrete strings without

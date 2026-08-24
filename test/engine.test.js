@@ -176,4 +176,39 @@ describe("engine", () => {
     assert.strictEqual(last.tiles.length, 1);
     assert.strictEqual(last.tiles[0].state, "amber");
   });
+
+  test("per-check staleMs:0 is honored as disabled even with a global default (regression: || was overriding 0)", () => {
+    // Infrequent updates (e.g. every 15min) must not be marked stale when
+    // the check explicitly sets staleMs:0 (disabled). The global default
+    // must not override an explicit 0.
+    const cfg = {
+      staleMs: 60000,
+      contexts: [],
+      tiles: [
+        {
+          id: "flinsail",
+          label: "FLINSAIL",
+          checks: [
+            {
+              type: "agreement",
+              path: "a",
+              path2: "b",
+              staleMs: 0,
+            },
+          ],
+        },
+      ],
+      coverage: { candidates: [], slots: 1 },
+    };
+    const out = [];
+    const e = createEngine(cfg, (tiles) => out.push(tiles));
+    // Both paths arrive once, long ago — well beyond the 60s global default.
+    const old = Date.now() - 900000; // 15 min ago
+    e.onDelta(delta("a", "deployed", old));
+    e.onDelta(delta("b", "deployed", old));
+    e.evaluate();
+    // staleMs:0 => staleness disabled => not stale => agreement green
+    assert.strictEqual(out.at(-1)[0].state, "green");
+    assert.notStrictEqual(out.at(-1)[0].reason, "agreement input stale/absent");
+  });
 });

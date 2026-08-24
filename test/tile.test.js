@@ -156,4 +156,78 @@ describe("tile aggregation", () => {
     assert.strictEqual(t.state, "neutral");
     assert.strictEqual(t.displayValue, "—");
   });
+
+  test("footer resolves labeled path readouts; absent paths show dash", () => {
+    const c = new PathCache();
+    c.set("solar.good", true);
+    c.set("solar.total", 358);
+    c.set("solar.port", 164);
+    c.setMeta("solar.total", {
+      displayUnits: { formula: "value", symbol: "W", displayFormat: "0" },
+    });
+    c.setMeta("solar.port", {
+      displayUnits: { formula: "value", symbol: "W", displayFormat: "0" },
+    });
+    const t = evalTile(
+      {
+        id: "solar",
+        label: "Solar",
+        checks: [{ type: "boolean", path: "solar.good", badWhen: false }],
+        footer: [
+          { label: "Port", path: "solar.port" },
+          { label: "Starboard", path: "solar.stbd" },
+          { label: "Total", path: "solar.total" },
+        ],
+      },
+      c,
+      new Map(),
+    );
+    assert.strictEqual(t.state, "green");
+    assert.strictEqual(t.footer.length, 3);
+    assert.deepStrictEqual(t.footer[0], { label: "Port", value: "164 W" });
+    assert.deepStrictEqual(t.footer[1], { label: "Starboard", value: "—" });
+    assert.deepStrictEqual(t.footer[2], { label: "Total", value: "358 W" });
+  });
+
+  test("footer omitted when not configured", () => {
+    const c = new PathCache();
+    c.set("a", 1);
+    const t = evalTile(
+      {
+        id: "t",
+        label: "T",
+        checks: [{ type: "boolean", path: "a", badWhen: false }],
+      },
+      c,
+      new Map(),
+    );
+    assert.deepStrictEqual(t.footer, []);
+  });
+
+  test("footer shows string state values as-is (no numeric formatting)", () => {
+    const c = new PathCache();
+    c.set("flinsail.detected", "deployed");
+    c.set("flinsail.recommended", "deployed");
+    const t = evalTile(
+      {
+        id: "flinsail",
+        label: "FLINSAIL",
+        checks: [
+          {
+            type: "agreement",
+            path: "flinsail.detected",
+            path2: "flinsail.recommended",
+          },
+        ],
+        footer: [
+          { label: "Detected", path: "flinsail.detected" },
+          { label: "Recommended", path: "flinsail.recommended" },
+        ],
+      },
+      c,
+      new Map(),
+    );
+    assert.strictEqual(t.footer[0].value, "deployed");
+    assert.strictEqual(t.footer[1].value, "deployed");
+  });
 });

@@ -403,12 +403,22 @@ function evalAgreement(check, cache, now) {
   const a = unwrap(cache.value(check.path));
   const b = unwrap(cache.value(check.path2));
   const equal = looseEqual(a, b);
+  // When display is requested, surface the observed (path) value as the
+  // headline — formatted via displayUnits for numbers, as-is for strings.
+  const displayValue = check.display
+    ? formatScalar(a, cache, check.path)
+    : undefined;
   if (equal) {
-    return { state: "green", reason: check.reason || "agreement" };
+    return {
+      state: "green",
+      reason: check.reason || "agreement",
+      displayValue,
+    };
   }
   return {
     state: check.mismatchState || "amber",
     reason: `${check.path} ≠ ${check.path2}`,
+    displayValue,
   };
 }
 
@@ -424,6 +434,24 @@ function looseEqual(a, b) {
 function formatNum(n) {
   if (Number.isInteger(n)) return String(n);
   return String(Math.round(n * 1000) / 1000);
+}
+
+/**
+ * Formats a scalar value for headline display: numbers get display-unit
+ * conversion (K→°C, etc.) via the path's metadata; strings and booleans
+ * (e.g. state enums like "deployed") are shown as-is.
+ *
+ * @param {*} raw - the unwrapped value
+ * @param {import("./staleness.js").PathCache} cache
+ * @param {string} path - path whose metadata supplies displayUnits
+ * @returns {string}
+ */
+function formatScalar(raw, cache, path) {
+  const n = valueToNumber(raw);
+  if (Number.isFinite(n)) {
+    return formatDisplayValue(n, cache.metaFor(path)?.displayUnits);
+  }
+  return String(raw);
 }
 
 /**

@@ -292,6 +292,40 @@ describe("checks", () => {
     );
   });
 
+  test("agreement: display:true surfaces the observed (path) value as headline", () => {
+    const c = cacheWith({ expected: "deployed", actual: "deployed" });
+    const r = evalCheck(
+      { type: "agreement", path: "expected", path2: "actual", display: true },
+      c,
+    );
+    assert.strictEqual(r.state, "green");
+    assert.strictEqual(r.displayValue, "deployed");
+  });
+
+  test("agreement: display:true on numeric value applies displayUnits conversion", () => {
+    const c = new PathCache();
+    c.set("observed", 285.76);
+    c.set("reference", 285.76);
+    c.setMeta("observed", {
+      displayUnits: {
+        formula: "value - 273.15",
+        symbol: "°C",
+        displayFormat: "0.0",
+      },
+    });
+    const r = evalCheck(
+      {
+        type: "agreement",
+        path: "observed",
+        path2: "reference",
+        display: true,
+      },
+      c,
+    );
+    assert.strictEqual(r.state, "green");
+    assert.strictEqual(r.displayValue, "12.6°C");
+  });
+
   test("most checks default stale -> neutral; overridable", () => {
     const old = Date.now() - 120000;
     const c = new PathCache();

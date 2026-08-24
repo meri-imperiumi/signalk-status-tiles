@@ -391,6 +391,7 @@ const checkVariants = [
         enum: ["green", "amber", "red", "neutral"],
         default: "amber",
       },
+      display: displayField,
       reason: reasonField,
       staleState: staleStateField,
       staleMs: staleMsField("Staleness threshold (ms)"),
@@ -474,6 +475,28 @@ export function buildSchema() {
                   ...v,
                   title: v.title,
                 })),
+              },
+            },
+            footer: {
+              type: "array",
+              title: "Footer readouts (optional)",
+              description:
+                "Small subordinate values shown beneath the headline (e.g. per-panel watts under a total). Informational only — never affect tile state. Each entry resolves a path and formats it via its displayUnits metadata.",
+              items: {
+                type: "object",
+                properties: {
+                  label: {
+                    type: "string",
+                    title: "Label",
+                    description:
+                      "Short tag, e.g. 'Port', 'Starboard'. Defaults to the path.",
+                  },
+                  path: {
+                    type: "string",
+                    title: "Signal K path",
+                  },
+                },
+                required: ["path"],
               },
             },
           },

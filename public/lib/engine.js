@@ -37,7 +37,7 @@ export function createEngine(config, onEval) {
     ...t,
     checks: (t.checks || []).map((c) => ({
       ...c,
-      staleMs: c.staleMs || globalStaleMs,
+      staleMs: c.staleMs ?? globalStaleMs,
     })),
   }));
 

@@ -8,6 +8,7 @@
 import { evalCheck } from "./checks.js";
 import { evalPredicate } from "./context.js";
 import { worst } from "./states.js";
+import { formatDisplayValue, valueToNumber } from "./util.js";
 
 /**
  * Evaluates a single tile against the cache. Returns the structured tile
@@ -90,12 +91,49 @@ export function evalTile(tile, cache, contexts, now = Date.now()) {
     }
   }
 
+  const footer = resolveFooter(tile.footer, cache);
+
   return {
     id: tile.id,
     state,
     label: tile.label || tile.id,
     reason: reason || (state === "green" ? "ok" : ""),
     displayValue,
+    footer,
     timestamp,
   };
+}
+
+/**
+ * Resolves a tile's footer entries — small subordinate readouts shown
+ * beneath the headline (e.g. "Port 164W Starboard 158W" under a Solar
+ * "Good 358W" headline). Each entry is a plain path lookup formatted via
+ * the path's displayUnits metadata when available. Absent/stale paths
+ * show "—". Footer is informational only and never affects tile state.
+ *
+ * @param {Array<{label?: string, path: string, unit?: string}>} [footer]
+ * @param {import("./staleness.js").PathCache} cache
+ * @returns {Array<{label: string, value: string}>}
+ */
+function resolveFooter(footer, cache) {
+  if (!Array.isArray(footer) || footer.length === 0) return [];
+  const out = [];
+  for (const f of footer) {
+    if (!f?.path) continue;
+    const meta = cache.metaFor(f.path);
+    let value;
+    if (!cache.has(f.path)) {
+      value = "—";
+    } else {
+      const raw = cache.value(f.path);
+      const n = valueToNumber(raw);
+      // Numeric values get display-unit conversion (K→°C, etc.).
+      // Strings/booleans (e.g. state enums like "deployed") are shown as-is.
+      value = Number.isFinite(n)
+        ? formatDisplayValue(n, meta?.displayUnits)
+        : String(raw);
+    }
+    out.push({ label: f.label || f.path, value });
+  }
+  return out;
 }

@@ -101,6 +101,18 @@ class StTileGrid extends HTMLElement {
         letter-spacing: 0.04em;
         color: #7c8a9b;
       }
+      .footer {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4vh 1.2vw;
+        margin-top: 0.4vh;
+        font-size: 1.6vh;
+        letter-spacing: 0.04em;
+      }
+      .footer-item { display: inline-flex; gap: 0.5vw; }
+      .footer-label { color: #5b6b7d; }
+      .footer-value { color: #9fb0c2; font-variant-numeric: tabular-nums; }
+      .tile.neutral .footer { opacity: 0.7; }
       .bracket {
         position: absolute;
         width: 2.2vh;
@@ -165,6 +177,23 @@ class StTileGrid extends HTMLElement {
         r.className = "reason";
         r.textContent = t.reason.toUpperCase();
         tile.append(r);
+      }
+      if (Array.isArray(t.footer) && t.footer.length > 0) {
+        const f = document.createElement("div");
+        f.className = "footer";
+        for (const e of t.footer) {
+          const span = document.createElement("span");
+          span.className = "footer-item";
+          const lab = document.createElement("span");
+          lab.className = "footer-label";
+          lab.textContent = e.label;
+          const val = document.createElement("span");
+          val.className = "footer-value";
+          val.textContent = e.value;
+          span.append(lab, val);
+          f.append(span);
+        }
+        tile.append(f);
       }
       this.gridEl.append(tile);
     }

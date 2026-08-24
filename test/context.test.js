@@ -73,6 +73,19 @@ describe("context predicates", () => {
     );
   });
 
+  test("equals with valuePath compares two live paths for equality (pathA === pathB)", () => {
+    const c = new PathCache();
+    c.set("a", "charging");
+    c.set("b", "charging");
+    c.set("d", "discharging");
+    assert.ok(
+      evalPredicate({ path: "a", compare: "equals", valuePath: "b" }, c),
+    );
+    assert.ok(
+      !evalPredicate({ path: "a", compare: "equals", valuePath: "d" }, c),
+    );
+  });
+
   test("absent path fails closed by default (whenMissing false)", () => {
     const c = new PathCache();
     assert.ok(
