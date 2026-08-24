@@ -61,9 +61,13 @@ function call(handler) {
   const res = {
     statusCode: 200,
     body: undefined,
+    headers: {},
     status(code) {
       this.statusCode = code;
       return this;
+    },
+    set(name, value) {
+      this.headers[name.toLowerCase()] = value;
     },
     json(payload) {
       this.body = payload;
@@ -133,6 +137,9 @@ test("/config serves the config with its hash", () => {
   assert.equal(res.statusCode, 200);
   assert.deepEqual(res.body.config, SAMPLE);
   assert.equal(res.body.configHash, configHash(SAMPLE));
+  // Never cached: a config edit restarts the plugin (same URL, new
+  // hash); a stale cached 200 would make the reload a no-op.
+  assert.equal(res.headers["cache-control"], "no-store");
 });
 
 test("/config answers 503 when the plugin is not started", () => {

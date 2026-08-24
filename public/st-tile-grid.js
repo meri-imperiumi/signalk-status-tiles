@@ -152,6 +152,12 @@ class StTileGrid extends HTMLElement {
         );
         transition: background 0.2s, box-shadow 0.2s, border-color 0.2s;
       }
+      /* Grid items default to min-width:auto, so an unbreakable child
+         (a long dotted path) blows the track wider than the tile and
+         shoves the centered value off-center. Force them shrinkable
+         and let long tokens wrap (belt-and-suspenders alongside
+         shortenReason, which trims most paths to their tail). */
+      .tile > * { min-width: 0; }
       .tile.lit {
         border-color: hsl(var(--hue) 70% 45%);
         background: hsl(var(--hue) 55% 10%);
@@ -184,6 +190,8 @@ class StTileGrid extends HTMLElement {
         letter-spacing: 0.08em;
         text-transform: uppercase;
         color: #9fb0c2;
+        text-align: center;
+        overflow-wrap: anywhere;
       }
       .value {
         grid-area: value;
@@ -200,6 +208,8 @@ class StTileGrid extends HTMLElement {
         font-size: 1.8vh;
         letter-spacing: 0.04em;
         color: #7c8a9b;
+        text-align: center;
+        overflow-wrap: anywhere;
       }
       .footer {
         grid-area: footer;
@@ -210,7 +220,7 @@ class StTileGrid extends HTMLElement {
         font-size: 1.6vh;
         letter-spacing: 0.04em;
       }
-      .footer-item { display: inline-flex; gap: 0.5vw; }
+      .footer-item { display: inline-flex; gap: 0.5vw; min-width: 0; overflow-wrap: anywhere; }
       .footer-label { color: #5b6b7d; }
       .footer-value { color: #9fb0c2; font-variant-numeric: tabular-nums; }
       .tile.neutral .footer { opacity: 0.7; }
@@ -405,7 +415,7 @@ class StTileGrid extends HTMLElement {
       if (t.reason && t.state !== "green") {
         const r = document.createElement("div");
         r.className = "reason";
-        r.textContent = t.reason.toUpperCase();
+        r.textContent = shortenReason(t.reason).toUpperCase();
         tile.append(r);
       }
       if (Array.isArray(t.footer) && t.footer.length > 0) {
@@ -468,9 +478,34 @@ class StTileGrid extends HTMLElement {
 }
 
 /** Last two dot-segments of a path — full paths overflow a tile label. */
-function shortPath(p) {
+export function shortPath(p) {
   const parts = String(p).split(".");
   return parts.slice(-2).join(".");
+}
+
+/**
+ * Last dot-segment of a path — the differing tail is all a helm display
+ * needs; the shared prefix is noise on a glanceable reason line.
+ */
+export function lastSegment(p) {
+  const parts = String(p).split(".");
+  return parts[parts.length - 1];
+}
+
+/**
+ * Shortens every Signal-K-path token in a reason string to its last
+ * dot-segment, leaving the surrounding words/Operators intact. A
+ * reason like `...deployment.flinsail.detectedstate ≠ ...recommendedstate`
+ * becomes `detectedstate ≠ recommendedstate` — the shared prefix is the
+ * same for both sides, so only the differing tail is glanceable. Single
+ * segments, numbers, and plain words are left alone (they are already
+ * short or are not paths). Applied before uppercasing.
+ */
+export function shortenReason(text) {
+  return String(text).replace(
+    /[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+/g,
+    (m) => lastSegment(m),
+  );
 }
 
 customElements.define("st-tile-grid", StTileGrid);

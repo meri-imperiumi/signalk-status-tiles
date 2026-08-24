@@ -120,6 +120,12 @@ export default function (app) {
           res.status(503).json({ message: "Plugin not started" });
           return;
         }
+        // Never cache: a config edit restarts the plugin and the
+        // configHash changes, but the URL stays the same. A browser
+        // that serves a stale cached 200 would hand back the OLD hash,
+        // which equals the webapp's current hash => the reload becomes
+        // a no-op and the new config never applies.
+        res.set("Cache-Control", "no-store");
         res.json({ config: pluginConfig, configHash: pluginConfigHash });
       });
     },

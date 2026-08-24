@@ -227,6 +227,70 @@ test("initial load: engine built from the REST envelope, hash path subscribed", 
   el.disconnectedCallback();
 });
 
+test("reload actually applies the new config to evaluation", async () => {
+  // Same path, different threshold: with SoC=0.4, config LOW (warn 0.2)
+  // => amber (value above the high-warn); config HIGH (warn 0.6) =>
+  // green (value below). A reload that only swaps the stream paths but
+  // keeps evaluating the OLD engine would leave the state unchanged —
+  // this catches a real apply bug.
+  const low = configWith(0.2, 0);
+  const high = configWith(0.6, 0);
+  FakeWebSocket.sockets = [];
+  server.statusCode = 200;
+  server.configBody = { config: low, configHash: "h-low" };
+
+  const el = mount();
+  await el.connectedCallback();
+  await flush();
+  const socket = FakeWebSocket.sockets.at(-1);
+  socket.serverOpen();
+  await flush();
+  // Seed SoC=0.4 (above the high-warn=0.2 => amber under `low`).
+  socket.serverMessage(
+    JSON.stringify({
+      context: "vessels.self",
+      updates: [
+        {
+          values: [
+            {
+              path: "electrical.batteries.0.capacity.stateOfCharge",
+              value: 0.4,
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  await flush();
+  assert.match(
+    el.gridEl.gridEl.children[0].className,
+    /alarm/,
+    "above the low threshold => amber alarm",
+  );
+
+  // Server-side edit: new config with a much lower warn threshold.
+  server.configBody = { config: high, configHash: "h-high" };
+  socket.serverMessage(
+    JSON.stringify({
+      context: "vessels.self",
+      updates: [
+        { values: [{ path: "statusTiles.configHash", value: "h-high" }] },
+      ],
+    }),
+  );
+  await flush(10);
+  assert.equal(el.configHash, "h-high");
+  // Same SoC=0.4 is now BELOW high-warn=0.6 => green. The new engine
+  // (not the old one) must be evaluating the cached value. Green is
+  // `lit` but NOT `alarm`.
+  assert.doesNotMatch(
+    el.gridEl.gridEl.children[0].className,
+    /alarm/,
+    "new threshold applied after reload => green",
+  );
+  el.disconnectedCallback();
+});
+
 test("initial load: still works when the server answers the old bare-config shape", async () => {
   FakeWebSocket.sockets = [];
   server.statusCode = 200;
