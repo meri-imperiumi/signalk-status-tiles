@@ -30,6 +30,57 @@ context is inactive.
 `neutral` must be a first-class, deliberately-chosen output of every check
 type — never an accidental default that hides an unhandled case.
 
+### 2.1 Valence: problem vs. opportunity
+
+The four states above all answer one question: *how urgently does
+something bad need attention?* Some metrics are actionable in the
+opposite direction too — not "something is wrong," but "there's a
+beneficial window open that will close." Energy forecasting is the
+motivating case: a forecasted **deficit** (SoC trending down — reduce
+discretionary load) is a problem; a forecasted **surplus** (heading for
+100%, solar/wind about to go to waste) is the mirror image — actionable,
+worth a glance, but not a problem at all. Collapsing that onto the
+amber/red scale (as §7.1 originally did, mapping a plugin's `WARN`
+straight through) misrepresents good news as a warning.
+
+**A fifth state, `opportunity`, is added — structurally separate from
+amber/red, not a variant of either.**
+
+- `opportunity` is **not on the problem-severity ladder.** It doesn't
+  rank between `amber` and `red`, or above `red` — it's a different
+  branch, not a rung. The worst-of aggregation defined above (§2, "a
+  tile's state is the worst state among its checks") applies only
+  within the problem branch (`green`/`neutral`/`amber`/`red`).
+- **A tile is in exactly one state at any given evaluation** — a
+  problem-severity state, `neutral`, or `opportunity`, never a
+  simultaneous mix. For a single metric with an asymmetric two-sided
+  check (e.g. a forecast trajectory where the low side means deficit
+  and the high side means surplus), this falls out naturally: the
+  underlying value can't be trending both down and up at once, so only
+  one branch is ever live.
+- **Multiple checks on one tile must not straddle both branches.** If a
+  tile's checks could independently produce a problem state from one
+  path and an `opportunity` state from an unrelated path at the same
+  time, that's a real ambiguity (which does the tile show?) — split
+  into two tiles rather than resolving it with an arbitrary tie-break.
+  A single check with genuinely asymmetric bands on one metric (the
+  energy-outlook case) is not this situation and stays as one tile.
+- **`opportunity` ranks below `amber`/`red` for urgency/interrupt
+  purposes**, even though it's "above `green`" for noticing purposes.
+  It must never be eligible for the full-screen-interrupt tier discussed
+  in §11.2 (open question there) even if that tier is later adopted for
+  genuine problems — there is nothing urgent about a chance to make
+  water.
+- **Out of scope for §10's coverage/unclaimed-anomaly detection.** That
+  mechanism exists to guarantee nothing dangerous slips through
+  curation; missing a surplus window has no safety stakes comparable to
+  missing a real fault, so the automatic overflow-slot mechanism
+  surfaces unclaimed problem states only. This is a deliberate scope
+  limit, not an oversight — worth revisiting only if a future
+  opportunity case turns out to have real cost to missing it.
+- Rendering: `opportunity` needs its own color, distinct from the
+  green→amber→red ramp (not a shade of any of them) — see §11.
+
 ## 3. Core entities
 
 ### 3.1 Context
@@ -120,35 +171,52 @@ A single typed, declarative rule within a tile. Types, minimum viable set:
   (which value means "bad" is configurable, since "bad" isn't always
   `true`)
 - **banded** — numeric value against warn/crit thresholds on either or
-  both sides (low and/or high)
+  both sides (low and/or high). The two sides' target states are
+  independently configurable, not hardcoded to "low is bad, high is
+  bad" — this is what lets one check express an asymmetric metric like
+  an energy forecast, where the low side means `amber`/`red` (deficit)
+  and the high side means `opportunity` (surplus), rather than treating
+  both directions as the same kind of bad (§2.1).
 - **differential** — absolute difference between two paths against
   warn/crit thresholds (e.g. cell voltage spread)
 - **alarmGroup** — a list of boolean/alarm paths; any tripped *or stale*
   → red; optional secondary numeric sub-check (e.g. battery level) for
   amber
 - **stateMatch** — a path's discrete value looked up in an explicit
-  state→tile-state map, with a default for unmapped values
+  state→tile-state map, with a default for unmapped values. The map's
+  target values are not restricted to problem states — a matched value
+  may map to `opportunity` where that's the honest read (§2.1).
 - **zone** — reads the path's own Signal K metadata `zones` (nominal /
   alert / warn / alarm / emergency) rather than thresholds declared in
   this config; a configurable severity map collapses the 5 zone states
-  onto the 4 tile states; an inline `zones` fallback may be supplied on
-  the check itself for paths without published metadata yet
+  onto the tile states; an inline `zones` fallback may be supplied on
+  the check itself for paths without published metadata yet. Note: SK's
+  own zone vocabulary has no native "good/opportunity" concept — it's
+  inherently a badness scale — so a `zone` check cannot itself produce
+  `opportunity`; use `banded` or `notification` for asymmetric metrics.
 - **notification** — reads a `notifications.*` path directly: the
   upstream plugin has already done its own severity classification
   (`normal`/`alert`/`warn`/`alarm`/`emergency`) and usually already
   written a human-readable sentence into the notification's message.
   This check maps that state through a severity map (same shape as
-  `zone`'s) and defaults `reason` to the notification's own message
-  rather than requiring one to be authored per rule. This is the
-  formal version of "just point a check at the server's own
-  notification" — useful for any plugin, not only zone-backed ones,
-  that already publishes its own alarm/informational state.
+  `zone`'s, and likewise able to target `opportunity`) and defaults
+  `reason` to the notification's own message rather than requiring one
+  to be authored per rule. This is the formal version of "just point a
+  check at the server's own notification" — useful for any plugin, not
+  only zone-backed ones, that already publishes its own alarm or
+  informational state. §2.1's whole motivation was a `notification`
+  check whose source plugin used `WARN` for good news — the severity
+  map targeting `opportunity` is the fix, not a workaround.
 - **agreement** — two paths must be equal (e.g. a commanded/expected
   state vs. an actual/detected state); mismatch maps to a configurable
-  state, typically `amber`. Not limited to numeric paths — string and
-  enum values are the common case (e.g. `recommendedState` vs.
-  `detectedState` from a device-automation plugin, or a switch's
-  commanded vs. relay-confirmed state).
+  state — `amber` for most cases, but `opportunity` is often the more
+  honest read when the mismatch represents missed upside rather than
+  risk (e.g. a solar-deployable device that should have been deployed
+  and wasn't — see §7.1's FLINsail example, arguably an opportunity
+  case rather than a problem, revisited there). Not limited to numeric
+  paths — string and enum values are the common case (e.g.
+  `recommendedState` vs. `detectedState` from a device-automation
+  plugin, or a switch's commanded vs. relay-confirmed state).
 
 Every check type must independently define its behavior for: value
 absent, and value stale (see §4). These are not always the same
@@ -260,20 +328,33 @@ than a hypothetical, to check the abstraction actually holds:
   hasn't reduced yet (e.g. "lowest predicted SoC in the next 24h"), that
   reduction is the upstream plugin's job to add, not this system's.
 
-**Open question this example surfaces, not yet resolved:** a
+**Resolved by §2.1: opportunity is a distinct state, not a severity-map
+patch.** This example originally surfaced an open question — a
 `notification`-check severity map assumes the upstream plugin's
-`warn`/`alarm` vocabulary means the same thing this system means by
-`amber`/`red` — "needs attention." `notifications.electrical.energy.surplus`
-publishes `WARN: 1.3kWh surplus available...`, which is a *positive*
-notice (an opportunity, not a problem), not a fault, despite reusing the
-`WARN` state. Mapping that straight through would put an amber tile on
-screen for good news. §3.3's per-check `severityMap` override already
-allows fixing this case by case (e.g. map this specific notification's
-`warn` state to `green`, or to a distinct informational treatment if one
-gets added) — but it means `notification` checks should not be assumed
-safe to wire up without reading what the source plugin's severities
-actually mean, the same caution already called out for `zone` checks
-inheriting vendor-authored metadata (§10).
+`warn`/`alarm` vocabulary means what this system means by `amber`/`red`.
+`notifications.electrical.energy.surplus` publishes
+`WARN: 1.3kWh surplus available...`, which is a *positive* notice, not a
+fault, despite reusing the `WARN` state. The fix isn't to defuse it down
+to `green` (that discards genuinely actionable information — there's a
+window to run the watermaker) or leave it `amber` (misrepresents good
+news as a warning) — it's to map it to `opportunity`, a state that means
+"actionable, worth a glance" without borrowing severity language that
+implies risk. The general caution stands regardless: `notification` and
+`zone` checks inherit whatever vocabulary the source plugin or metadata
+author intended, and that has to be read case by case (§10's same point
+about vendor-authored zone metadata), not assumed to align with this
+system's meaning.
+
+**Retroactive read on the FLINsail example above:** `detectedState` vs.
+`recommendedState` disagreeing, with `missedYieldWh` quantifying what's
+being left on the table, is the same shape as the surplus case — missed
+upside, not risk. It's arguably better classified as an `agreement`
+check targeting `opportunity` than the `amber` framing implied earlier
+in this section, consistent with §3.3's `agreement` guidance. Whether
+that reclassification is right in practice is a judgment call about this
+specific plugin's intent, not something this spec can settle in the
+abstract — but the two examples clearly belong to the same category, and
+should probably land on the same side of the problem/opportunity line.
 
 ## 8. Evaluation triggers
 
@@ -421,6 +502,13 @@ must revert automatically once the anomaly clears.
   confusable. Reduced contrast/weight (dimming) is an acceptable and
   recommended *additional* signal on top of a distinct color, not a
   substitute for one — see below.
+- `opportunity` (§2.1) gets its own color, outside the green→amber→red
+  ramp entirely (a gold/blue treatment, not a tint of green or amber) —
+  it must read as "different in kind," not "a milder amber" or "a
+  bonus green." Getting this wrong is the same failure as amber/red
+  blurring together: it would train the eye to lump "good news" and
+  "low-grade warning" into one glance-read, defeating the reason the
+  state was split out in the first place.
 - No dependency on the viewer being close enough to read fine print;
   color + short label carries the meaning, not body text.
 - **Full-viewport layout.** The tile display is designed to fill the
