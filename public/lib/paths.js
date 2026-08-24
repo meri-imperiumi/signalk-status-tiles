@@ -89,6 +89,11 @@ function collectCheckPaths(check, out) {
     case "notification":
       if (check.path) out.add(check.path);
       break;
+    case "compound":
+      // The predicate reuses context-predicate shape; collect every path
+      // it references so the webapp opens a subscription for each.
+      collectPredicatePaths(check.predicate, out);
+      break;
   }
 }
 

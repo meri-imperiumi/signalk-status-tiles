@@ -92,4 +92,54 @@ describe("config validation", () => {
     };
     assert.ok(validateConfig(cfg).errors.some((e) => e.includes("Duplicate")));
   });
+
+  test("compound check with a predicate is valid", () => {
+    const cfg = {
+      tiles: [
+        {
+          id: "ac",
+          label: "AC",
+          checks: [
+            {
+              type: "compound",
+              predicate: {
+                allOf: [
+                  { path: "a", compare: "equals", value: "0" },
+                  { path: "b", compare: "equals", value: "on" },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const { errors, warnings } = validateConfig(cfg);
+    assert.strictEqual(errors.length, 0);
+    assert.strictEqual(warnings.length, 0);
+  });
+
+  test("compound check with empty/missing predicate is an error", () => {
+    const noPred = {
+      tiles: [{ id: "x", label: "X", checks: [{ type: "compound" }] }],
+    };
+    assert.ok(
+      validateConfig(noPred).errors.some((e) =>
+        e.includes("compound check has no predicate"),
+      ),
+    );
+    const emptyPred = {
+      tiles: [
+        {
+          id: "x",
+          label: "X",
+          checks: [{ type: "compound", predicate: {} }],
+        },
+      ],
+    };
+    assert.ok(
+      validateConfig(emptyPred).errors.some((e) =>
+        e.includes("compound check predicate is empty"),
+      ),
+    );
+  });
 });

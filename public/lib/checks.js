@@ -12,6 +12,7 @@
  *
  * @file checks.js */
 
+import { evalPredicate } from "./context.js";
 import { DEFAULT_STALE_MS } from "./staleness.js";
 import { formatDisplayValue, unwrap, valueToNumber } from "./util.js";
 
@@ -25,6 +26,7 @@ export const CHECK_TYPES = new Set([
   "zone",
   "notification",
   "agreement",
+  "compound",
 ]);
 
 /**
@@ -48,6 +50,13 @@ const DEFAULT_STALE_STATE = {
   zone: "neutral",
   notification: "neutral",
   agreement: "neutral",
+  // compound has no single watched path of its own; its predicate
+  // references paths and handles missingness via whenMissing. A stale
+  // compound check (a referenced path gone quiet) is, by default, not
+  // an alarm — the predicate simply won't match on a missing value
+  // (contexts fail closed). Override per check if a silent input
+  // should be a fault.
+  compound: "neutral",
 };
 
 /**
@@ -88,6 +97,8 @@ export function evalCheck(check, cache, now = Date.now()) {
       return evalNotification(check, cache, now);
     case "agreement":
       return evalAgreement(check, cache, now);
+    case "compound":
+      return evalCompound(check, cache, now);
     default:
       return { state: "neutral", reason: `Unknown check type ${check.type}` };
   }
@@ -422,6 +433,97 @@ function evalAgreement(check, cache, now) {
   };
 }
 
+/**
+ * compound: a context-style predicate (reusing evalPredicate) mapped to
+ * a single configurable state when true (default amber), green when false
+ * (SPEC §3.3). The motivating case for a rule that genuinely cannot be
+ * expressed by any single-path check type — e.g. "amber when AC output is
+ * zero AND the inverter is on" (the user forgot to leave the inverter
+ * running), which spans two independent paths with an AND that no existing
+ * check type captures.
+ *
+ * The predicate reuses the same forms as contexts (path comparisons,
+ * allOf/anyOf/not, between), so authoring is consistent and the depth cap
+ * from SPEC §9 applies equally. Missingness is handled per-leaf by the
+ * predicate's `whenMissing` (default false — fail closed), so an unknown
+ * input doesn't silently match.
+ *
+ * Staleness: a compound check has no single watched path, so the usual
+ * single-path staleMs gate doesn't apply. Instead, each referenced path is
+ * checked for staleness against the check's staleMs (0 = global default);
+ * if ANY referenced path is stale, the check resolves to its staleState
+ * (default neutral). This keeps the "missing data is not silently green"
+ * principle (SPEC §4) intact for a check that reads multiple paths — a
+ * stale inverter-mode reading must not let the predicate silently fail
+ * closed and read as a healthy green.
+ *
+ * @param {object} check - `{ predicate, state (default amber), staleState, staleMs }`
+ * @param {import("./staleness.js").PathCache} cache
+ * @param {number} now
+ * @returns {CheckResult}
+ */
+function evalCompound(check, cache, now) {
+  const threshold = check.staleMs ?? DEFAULT_STALE_MS;
+  // Gather referenced paths and fail to staleState if any are stale, so a
+  // silent input can't quietly make the predicate not-match into green.
+  const paths = collectReferencedPaths(check.predicate);
+  for (const p of paths) {
+    if (cache.isStale(p, threshold, now)) {
+      return staleResult(check, `compound input ${p} stale/absent`);
+    }
+  }
+  const matched = evalPredicate(check.predicate, cache, now);
+  if (matched) {
+    return {
+      state: check.state || "amber",
+      reason: check.reason || "compound condition met",
+    };
+  }
+  return {
+    state: "green",
+    reason: check.reason || "compound condition not met",
+  };
+}
+
+/**
+ * Walks a predicate tree (same shape evalPredicate accepts) and returns
+ * the set of paths it references, for staleness checking. Mirrors
+ * collectPredicatePaths in paths.js but local to avoid a circular import
+ * (paths.js imports from checks.js for CHECK_TYPES).
+ *
+ * @param {object} pred
+ * @returns {Set<string>}
+ */
+function collectReferencedPaths(pred, out = new Set()) {
+  if (!pred || typeof pred !== "object") return out;
+  if (pred.path) out.add(pred.path);
+  if (pred.valuePath) out.add(pred.valuePath);
+  if (pred.between) {
+    if (typeof pred.between.from === "string") out.add(pred.between.from);
+    if (typeof pred.between.to === "string") out.add(pred.between.to);
+  }
+  if (Array.isArray(pred.allOf))
+    for (const p of pred.allOf) collectReferencedPaths(p, out);
+  if (Array.isArray(pred.anyOf))
+    for (const p of pred.anyOf) collectReferencedPaths(p, out);
+  if (pred.not) collectReferencedPaths(pred.not, out);
+  return out;
+}
+
+/**
+ * Formats a banded value for display. Each check type that produces a
+ * display value formats its own (SPEC §3.4).
+ *
+ * @param {number} v
+ * @param {object} check
+ * @returns {string}
+ */
+function formatBanded(v, check) {
+  if (check.unit === "%") return `${Math.round(v * 100)}%`;
+  if (check.unit === "ratio") return `${Math.round(v * 100)}%`;
+  return formatNum(v);
+}
+
 function looseEqual(a, b) {
   if (a == null || b == null) return a === b;
   const na = valueToNumber(a);
@@ -452,18 +554,4 @@ function formatScalar(raw, cache, path) {
     return formatDisplayValue(n, cache.metaFor(path)?.displayUnits);
   }
   return String(raw);
-}
-
-/**
- * Formats a banded value for display. Each check type that produces a
- * display value formats its own (SPEC §3.4).
- *
- * @param {number} v
- * @param {object} check
- * @returns {string}
- */
-function formatBanded(v, check) {
-  if (check.unit === "%") return `${Math.round(v * 100)}%`;
-  if (check.unit === "ratio") return `${Math.round(v * 100)}%`;
-  return formatNum(v);
 }

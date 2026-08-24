@@ -98,6 +98,23 @@ export function validateConfig(config) {
         );
         continue;
       }
+      if (check.type === "compound") {
+        if (!check.predicate) {
+          errors.push(`Tile "${tile.id}" compound check has no predicate`);
+        } else if (
+          !hasComparator(check.predicate) &&
+          !hasCombinator(check.predicate)
+        ) {
+          errors.push(`Tile "${tile.id}" compound check predicate is empty`);
+        } else {
+          const depth = predicateDepth(check.predicate, 0);
+          if (depth > MAX_PREDICATE_DEPTH) {
+            warnings.push(
+              `Tile "${tile.id}" compound check nests predicates to depth ${depth} (max ${MAX_PREDICATE_DEPTH}); split into named contexts`,
+            );
+          }
+        }
+      }
       if (check.display) displayCount++;
     }
     if (displayCount > 1) {

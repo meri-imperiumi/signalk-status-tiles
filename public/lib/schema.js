@@ -398,6 +398,33 @@ const checkVariants = [
     },
     required: ["type", "path", "path2"],
   },
+  {
+    title: "Compound",
+    description:
+      "A context-style predicate (AND/OR/NOT over path comparisons) that maps to a single state when true. For rules no single-path check can express — e.g. 'amber when AC output is 0 AND the inverter is on'.",
+    type: "object",
+    properties: {
+      type: { type: "string", const: "compound" },
+      state: {
+        type: "string",
+        title: "State when predicate is true",
+        enum: ["green", "amber", "red", "neutral"],
+        default: "amber",
+        description:
+          "What the tile shows when the predicate matches (default amber). Green when it doesn't.",
+      },
+      predicate: {
+        ...predicateSchema(),
+        title: "Predicate",
+        description:
+          "Same predicate forms as a context: path comparisons combined with allOf/anyOf/not. Nesting capped at depth 2 (SPEC §9).",
+      },
+      reason: reasonField,
+      staleState: staleStateField,
+      staleMs: staleMsField("Staleness threshold (ms)"),
+    },
+    required: ["type", "predicate"],
+  },
 ];
 
 /**

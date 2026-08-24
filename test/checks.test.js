@@ -19,6 +19,7 @@ describe("checks", () => {
       "alarmGroup",
       "banded",
       "boolean",
+      "compound",
       "differential",
       "notification",
       "stateMatch",
@@ -340,6 +341,229 @@ describe("checks", () => {
         c,
       ).state,
       "red",
+    );
+  });
+
+  test("compound: amber when predicate matches, green otherwise", () => {
+    // Motivating case: AC output is 0 AND inverter is on -> amber
+    // (user forgot to leave the inverter running).
+    const off = cacheWith({
+      "electrical.venus.acPower": 0,
+      "electrical.inverters.294.mode": "on",
+    });
+    assert.strictEqual(
+      evalCheck(
+        {
+          type: "compound",
+          predicate: {
+            allOf: [
+              {
+                path: "electrical.venus.acPower",
+                compare: "equals",
+                value: "0",
+              },
+              {
+                path: "electrical.inverters.294.mode",
+                compare: "equals",
+                value: "on",
+              },
+            ],
+          },
+        },
+        off,
+      ).state,
+      "amber",
+    );
+    // Inverter on but producing power -> not the fault -> green.
+    const producing = cacheWith({
+      "electrical.venus.acPower": 320,
+      "electrical.inverters.294.mode": "on",
+    });
+    assert.strictEqual(
+      evalCheck(
+        {
+          type: "compound",
+          predicate: {
+            allOf: [
+              {
+                path: "electrical.venus.acPower",
+                compare: "equals",
+                value: "0",
+              },
+              {
+                path: "electrical.inverters.294.mode",
+                compare: "equals",
+                value: "on",
+              },
+            ],
+          },
+        },
+        producing,
+      ).state,
+      "green",
+    );
+    // Inverter off and no output -> also green (the fault is specifically
+    // 'on but idle').
+    const inverterOff = cacheWith({
+      "electrical.venus.acPower": 0,
+      "electrical.inverters.294.mode": "off",
+    });
+    assert.strictEqual(
+      evalCheck(
+        {
+          type: "compound",
+          predicate: {
+            allOf: [
+              {
+                path: "electrical.venus.acPower",
+                compare: "equals",
+                value: "0",
+              },
+              {
+                path: "electrical.inverters.294.mode",
+                compare: "equals",
+                value: "on",
+              },
+            ],
+          },
+        },
+        inverterOff,
+      ).state,
+      "green",
+    );
+  });
+
+  test("compound: configurable state when matched (e.g. red)", () => {
+    const c = cacheWith({ a: 1, b: 2 });
+    assert.strictEqual(
+      evalCheck(
+        {
+          type: "compound",
+          state: "red",
+          predicate: {
+            path: "a",
+            compare: "lt",
+            value: "10",
+          },
+        },
+        c,
+      ).state,
+      "red",
+    );
+  });
+
+  test("compound: supports anyOf and not combinators", () => {
+    const c = cacheWith({ a: 1, b: 0 });
+    assert.strictEqual(
+      evalCheck(
+        {
+          type: "compound",
+          predicate: {
+            anyOf: [
+              { path: "a", compare: "equals", value: "1" },
+              { path: "b", compare: "equals", value: "1" },
+            ],
+          },
+        },
+        c,
+      ).state,
+      "amber",
+    );
+    assert.strictEqual(
+      evalCheck(
+        {
+          type: "compound",
+          predicate: {
+            not: { path: "a", compare: "equals", value: "0" },
+          },
+        },
+        c,
+      ).state,
+      "amber",
+    );
+  });
+
+  test("compound: stale referenced path -> staleState (default neutral), never silent green", () => {
+    const old = Date.now() - 120000;
+    const c = new PathCache();
+    // acPower fresh at 0, inverter mode stale -> predicate would
+    // not match (mode absent), but staleness must surface, not a green.
+    c.set("electrical.venus.acPower", 0, Date.now());
+    c.set("electrical.inverters.294.mode", "on", old);
+    assert.strictEqual(
+      evalCheck(
+        {
+          type: "compound",
+          predicate: {
+            allOf: [
+              {
+                path: "electrical.venus.acPower",
+                compare: "equals",
+                value: "0",
+              },
+              {
+                path: "electrical.inverters.294.mode",
+                compare: "equals",
+                value: "on",
+              },
+            ],
+          },
+        },
+        c,
+      ).state,
+      "neutral",
+    );
+    // Override: a stale inverter-mode reading is a fault here.
+    assert.strictEqual(
+      evalCheck(
+        {
+          type: "compound",
+          staleState: "red",
+          predicate: {
+            allOf: [
+              {
+                path: "electrical.venus.acPower",
+                compare: "equals",
+                value: "0",
+              },
+              {
+                path: "electrical.inverters.294.mode",
+                compare: "equals",
+                value: "on",
+              },
+            ],
+          },
+        },
+        c,
+      ).state,
+      "red",
+    );
+  });
+
+  test("compound: absent path fails closed (whenMissing default false)", () => {
+    const c = cacheWith({ "electrical.venus.acPower": 0 });
+    assert.strictEqual(
+      evalCheck(
+        {
+          type: "compound",
+          predicate: {
+            allOf: [
+              {
+                path: "electrical.venus.acPower",
+                compare: "equals",
+                value: "0",
+              },
+              {
+                path: "electrical.inverters.294.mode",
+                compare: "equals",
+                value: "on",
+              },
+            ],
+          },
+        },
+        c,
+      ).state,
+      "neutral",
     );
   });
 });

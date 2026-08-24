@@ -187,4 +187,56 @@ describe("paths", () => {
     };
     assert.strictEqual(collectPaths(inner).includes("p"), true);
   });
+
+  test("compound check collects every path its predicate references", () => {
+    const config = {
+      tiles: [
+        {
+          id: "ac",
+          label: "AC",
+          checks: [
+            {
+              type: "compound",
+              predicate: {
+                allOf: [
+                  {
+                    path: "electrical.venus.acPower",
+                    compare: "equals",
+                    value: "0",
+                  },
+                  {
+                    path: "electrical.inverters.294.mode",
+                    compare: "equals",
+                    value: "on",
+                  },
+                ],
+              },
+            },
+            {
+              type: "compound",
+              predicate: {
+                anyOf: [
+                  { path: "a", compare: "gt", valuePath: "b" },
+                  { not: { path: "c", compare: "equals", value: "0" } },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const paths = collectPaths(config);
+    for (const expected of [
+      "electrical.venus.acPower",
+      "electrical.inverters.294.mode",
+      "a",
+      "b",
+      "c",
+    ]) {
+      assert.ok(
+        paths.includes(expected),
+        `expected ${expected} in ${JSON.stringify(paths)}`,
+      );
+    }
+  });
 });
