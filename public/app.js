@@ -6,6 +6,7 @@
  *
  * @file app.js */
 
+import { AnomalyLog } from "./lib/anomaly-log.js";
 import { createEngine } from "./lib/engine.js";
 import { collectPaths } from "./lib/paths.js";
 import { fetchVesselName } from "./lib/vessel.js";
