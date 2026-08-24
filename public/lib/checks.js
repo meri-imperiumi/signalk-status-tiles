@@ -126,7 +126,13 @@ function staleResult(check, reason) {
  * boolean: a path's truthiness maps to two configurable states. Which
  * value means "bad" is configurable (SPEC §3.3).
  *
- * @param {object} check - `{ path, badWhen (default true), staleState }`
+ * When designated `display`, the headline is a short label for the
+ * current state — defaults OK / NOT OK, overridable per check (e.g.
+ * RUNNING / STOPPED for an engine-running path where `badWhen:false`
+ * means false is the bad state). Stale inputs produce no displayValue
+ * (the tile normalizes that to "—", SPEC §3.4).
+ *
+ * @param {object} check - `{ path, badWhen (default true), okLabel?, notOkLabel?, display?, staleState }`
  * @param {import("./staleness.js").PathCache} cache
  * @param {number} now
  * @returns {CheckResult}
@@ -140,9 +146,12 @@ function evalBoolean(check, cache, now) {
   const truthy = val === true || val === 1 || val === "true";
   const bad = check.badWhen !== false; // default: true is bad
   const isBad = truthy === bad;
+  const okLabel = check.okLabel || "OK";
+  const notOkLabel = check.notOkLabel || "NOT OK";
   return {
     state: isBad ? "red" : "green",
-    reason: check.reason || check.path,
+    reason: check.reason || (check.display ? "" : check.path),
+    displayValue: check.display ? (isBad ? notOkLabel : okLabel) : undefined,
   };
 }
 

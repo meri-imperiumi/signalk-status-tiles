@@ -92,6 +92,20 @@ export function validateConfig(config) {
         `Tile "${tile.id}" references unknown context "${tile.context}"`,
       );
     }
+    if (tile.active) {
+      // Same predicate rules as a context (SPEC §9 depth cap; a
+      // degenerate predicate would be vacuously true, making the tile
+      // permanently "active" — no downgrade ever).
+      const depth = predicateDepth(tile.active, 0);
+      if (depth > MAX_PREDICATE_DEPTH) {
+        errors.push(
+          `Tile "${tile.id}" active predicate nests to depth ${depth} (max ${MAX_PREDICATE_DEPTH}); split into a named context`,
+        );
+      }
+      if (isEmptyPredicate(tile.active)) {
+        errors.push(`Tile "${tile.id}" active predicate is empty`);
+      }
+    }
     if (!tile.checks || tile.checks.length === 0) {
       errors.push(`Tile "${tile.id}" has no checks`);
     }

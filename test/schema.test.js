@@ -41,6 +41,13 @@ describe("schema", () => {
     const variants = s.properties.tiles.items.properties.checks.items.oneOf;
     const byType = (t) => variants.find((c) => c.properties?.type?.const === t);
 
+    // boolean: offers the display designation and OK/NOT OK labels
+    // (defaults) so a boolean tile can show a headline value.
+    const boolean = byType("boolean");
+    assert.ok(boolean.properties.display);
+    assert.equal(boolean.properties.okLabel.default, "OK");
+    assert.equal(boolean.properties.notOkLabel.default, "NOT OK");
+
     // banded: per-side warnState/critState include opportunity.
     const banded = byType("banded");
     assert.ok(
@@ -85,6 +92,23 @@ describe("schema", () => {
     assert.ok(
       !zone.properties.severityMap.properties.warn.enum.includes("opportunity"),
       "zone must not offer opportunity (SPEC §3.3)",
+    );
+
+    // tile offers an `active` predicate (per-tile soft gate; green is
+    // downgraded to neutral when false). Same predicate shape as a
+    // context, including notEquals.
+    const tileProps = s.properties.tiles.items.properties;
+    assert.ok(tileProps.active, "tile offers an active predicate");
+    assert.ok(
+      tileProps.active.properties.compare.enum.includes("notEquals"),
+      "active predicate offers notEquals",
+    );
+    // context predicate likewise offers notEquals.
+    assert.ok(
+      s.properties.contexts.items.properties.predicate.properties.compare.enum.includes(
+        "notEquals",
+      ),
+      "context predicate offers notEquals",
     );
 
     // coverage severityMap likewise excludes opportunity (SPEC §2.1, §10).

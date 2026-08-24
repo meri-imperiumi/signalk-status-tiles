@@ -13,7 +13,7 @@
 
 import { valueToNumber } from "./util.js";
 
-/** @typedef {"equals"|"gt"|"gte"|"lt"|"lte"} Comparator */
+/** @typedef {"equals"|"notEquals"|"gt"|"gte"|"lt"|"lte"} Comparator */
 
 /**
  * Whether a predicate node (recursively) says nothing at all: no
@@ -142,6 +142,8 @@ function evalComparison(pred, cache) {
   switch (pred.compare) {
     case "equals":
       return looseEqual(raw, want);
+    case "notEquals":
+      return !looseEqual(raw, want);
     case "gt":
       return valueToNumber(raw) > valueToNumber(want);
     case "gte":

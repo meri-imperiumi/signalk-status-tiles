@@ -26,6 +26,34 @@ const EVAL_INTERVAL_MS = 1000; // timer-driven staleness discovery tick
 /** Config-fetch retries: a plugin restart answers 503 for a moment. */
 const CONFIG_RETRIES = 4;
 const CONFIG_RETRY_MS = 500;
+/**
+ * Poll the config hash for changes. The hash-delta over the stream is
+ * the fast path, but it depends on the server delivering a delta for a
+ * non-schema path (`statusTiles.configHash` under vessels.self), which
+ * not all Signal K server versions do. The poll is the reliable
+ * backstop: a config save is rare, so a light GET every few seconds is
+ * cheap and catches the change regardless of stream behavior.
+ */
+const CONFIG_POLL_MS = 5000;
+
+/**
+ * Debug logging, off by default. Enable with `?st-debug=1` in the URL
+ * or `localStorage.stDebug = "1"`. Prints the config-hash lifecycle
+ * (boot, delta, poll, reload decision) so a config change that isn't
+ * reaching the screen can be traced in the browser console.
+ */
+const ST_DEBUG = (() => {
+  try {
+    if (typeof window === "undefined" || !window.location) return false;
+    const p = new URLSearchParams(window.location.search || "").get("st-debug");
+    return p === "1" || window.localStorage?.stDebug === "1";
+  } catch {
+    return false;
+  }
+})();
+function dbg(...args) {
+  if (ST_DEBUG) console.log("[status-tiles]", ...args);
+}
 
 class StApp extends HTMLElement {
   constructor() {
@@ -56,6 +84,7 @@ class StApp extends HTMLElement {
       const { config, configHash } = await fetchPluginConfig();
       this.config = config;
       this.configHash = configHash;
+      dbg("boot configHash=", configHash);
     } catch (err) {
       this.gridEl.error = `Config load failed: ${err.message}`;
       return;
@@ -91,8 +120,23 @@ class StApp extends HTMLElement {
       this.#watchedPaths(),
       (delta) => {
         const hash = configHashFromDelta(delta);
+        if (hash) dbg("delta configHash=", hash, "current=", this.configHash);
         if (hash && hash !== this.configHash) {
-          this.#reloadIfChanged().catch((err) => fail("reloading config", err));
+          if (this.configHash === null) {
+            // First hash we've seen (REST /config didn't give us one —
+            // see fetchPluginConfig). Adopt it as the baseline instead
+            // of reloading: this delta describes the config the page
+            // already booted with, not a change.
+            this.configHash = hash;
+            dbg("adopted first delta hash as baseline");
+          } else {
+            // A real change. The delta hash is content-addressed
+            // (canonical JSON), so a differing value is authoritative
+            // — reload directly, no re-fetch needed (REST may not even
+            // serve a hash on this server).
+            dbg("delta differs -> reloading page");
+            window.location.reload();
+          }
         }
         if (!this.engine) return;
         try {
@@ -130,6 +174,16 @@ class StApp extends HTMLElement {
       }
     }, EVAL_INTERVAL_MS);
 
+    // Poll-driven config reload (reliable backstop to the stream hash
+    // delta, which some servers drop for the non-schema path).
+    this.pollTimer = setInterval(
+      () =>
+        this.#reloadIfChanged().catch((err) =>
+          console.error("status-tiles poll:", err),
+        ),
+      CONFIG_POLL_MS,
+    );
+
     // Initial paint before any delta arrives.
     try {
       this.engine.evaluate();
@@ -141,6 +195,8 @@ class StApp extends HTMLElement {
   disconnectedCallback() {
     if (this.timer != null) clearInterval(this.timer);
     this.timer = null;
+    if (this.pollTimer != null) clearInterval(this.pollTimer);
+    this.pollTimer = null;
     this.stream?.close();
   }
 
@@ -186,29 +242,49 @@ class StApp extends HTMLElement {
   }
 
   /**
-   * Re-fetches the config and, when the hash differs from what we are
-   * running, swaps in a new engine (carrying the path cache over so
-   * nothing blanks) and re-subscribes the stream with the new path set.
+   * A config change (server-side edit restarting the plugin) is
+   * handled the simple, reliable way: a full page reload. In-page
+   * hot-swapping is attractive but fragile (stream re-subscription
+   * races, stale sockets, cached fetches), and on a helm display a
+   * config save is rare enough that a reload beats a half-applied
+   * config. The hash is content-addressed (canonical JSON), so a
+   * differing hash is always a real change — never a spurious reload.
+   *
    * Same hash => no-op, which is what the on-reconnect verification
-   * relies on.
+   * (catching a hash delta missed while the link was down) relies on.
    */
   async #reloadIfChanged() {
     if (this.reloading) return;
     this.reloading = true;
     try {
-      const { config, configHash } = await fetchPluginConfig();
-      if (configHash === this.configHash) return;
-      const oldEngine = this.engine;
-      this.config = config;
-      this.configHash = configHash;
-      this.gridEl.slotCount = config?.coverage?.slots ?? 1;
-      this.#noteConfigState();
-      this.engine = this.#buildEngine();
-      if (oldEngine) seedCache(this.engine.cache, oldEngine.cache);
-      // Reconnects with the new path set (setPaths closes the socket;
-      // the reconnect handler re-verifies the hash — equal now, no-op).
-      this.stream?.setPaths(this.#watchedPaths());
-      this.engine.evaluate();
+      const { configHash } = await fetchPluginConfig();
+      dbg("reload-check fetched=", configHash, "current=", this.configHash);
+      if (!configHash) {
+        // REST isn't serving a hash (older server, or a stale
+        // handler). The stream delta is the source of truth in that
+        // case; nothing to compare here.
+        dbg("no hash from REST -> no reload");
+        return;
+      }
+      if (configHash === this.configHash) {
+        dbg("hash matches -> no reload");
+        return;
+      }
+      if (this.configHash === null) {
+        // First real hash from REST: adopt as baseline, don't reload
+        // (the delta path may have set this already; harmless to set
+        // again to the same value).
+        this.configHash = configHash;
+        dbg("adopted first REST hash as baseline");
+        return;
+      }
+      // A real change: reload the whole app — fresh config, fresh
+      // stream, fresh cache. Guard against a reload loop: we did NOT
+      // update this.configHash, so a reconnect verify during the
+      // dying page still sees the OLD hash and won't re-trigger; the
+      // fresh page boots with the new hash as its baseline.
+      dbg("hash differs -> reloading page");
+      window.location.reload();
     } finally {
       this.reloading = false;
     }
@@ -270,16 +346,6 @@ async function fetchPluginConfig() {
     }
   }
   throw lastErr;
-}
-
-/** Copies a previous engine's cache into a freshly built one. */
-function seedCache(target, source) {
-  for (const [path, entry] of source.entries) {
-    target.set(path, entry.value, entry.timestamp);
-  }
-  for (const [path, meta] of source.meta) {
-    target.setMeta(path, meta);
-  }
 }
 
 /** @param {number} ms */

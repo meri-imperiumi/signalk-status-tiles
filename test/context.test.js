@@ -31,6 +31,56 @@ describe("context predicates", () => {
     assert.ok(evalPredicate({ path: "soc", compare: "lte", value: "0.5" }, c));
   });
 
+  test("notEquals is the negation of equals (incl. numeric and whenMissing)", () => {
+    const c = new PathCache();
+    c.set("inverter", "off");
+    // Motivating use case: "active when inverter NOT off" — the
+    // predicate is true for any state other than the literal 'off'.
+    assert.ok(
+      !evalPredicate(
+        { path: "inverter", compare: "notEquals", value: "off" },
+        c,
+      ),
+      "same value => notEquals false",
+    );
+    c.set("inverter", "on");
+    assert.ok(
+      evalPredicate(
+        { path: "inverter", compare: "notEquals", value: "off" },
+        c,
+      ),
+      "different value => notEquals true",
+    );
+    // Numeric coercion: 0.5 notEquals 0.6 is true.
+    c.set("soc", 0.5);
+    assert.ok(
+      evalPredicate({ path: "soc", compare: "notEquals", value: "0.6" }, c),
+    );
+    assert.ok(
+      !evalPredicate({ path: "soc", compare: "notEquals", value: "0.5" }, c),
+    );
+    // Absent path => whenMissing applies (default false), same as equals.
+    assert.ok(
+      !evalPredicate(
+        { path: "missing", compare: "notEquals", value: "off" },
+        c,
+      ),
+      "absent default whenMissing=false",
+    );
+    assert.ok(
+      evalPredicate(
+        {
+          path: "missing",
+          compare: "notEquals",
+          value: "off",
+          whenMissing: "true",
+        },
+        c,
+      ),
+      "absent whenMissing=true => true",
+    );
+  });
+
   test("valuePath compares two live paths (e.g. currentRadius < alertThreshold)", () => {
     const c = new PathCache();
     c.set("navigation.anchor.currentRadius", 18);

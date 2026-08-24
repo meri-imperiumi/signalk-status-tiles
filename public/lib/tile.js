@@ -10,6 +10,7 @@
  * @file tile.js */
 
 import { evalCheck } from "./checks.js";
+import { evalPredicate, isEmptyPredicate } from "./context.js";
 import { worst } from "./states.js";
 import { formatDisplayValue, valueToNumber } from "./util.js";
 
@@ -67,6 +68,24 @@ export function evalTile(tile, cache, contexts, now = Date.now()) {
     if (check.display) {
       displayValue = r.displayValue;
     }
+  }
+
+  // Per-tile active predicate: a soft gate. When a REAL predicate is
+  // supplied and evaluates false, checks still run and the display
+  // value still shows — only the state is downgraded: green becomes
+  // neutral (a dimmed "nothing to say" rather than a confident "all
+  // good"), while amber/red pass through (a real problem still alarms).
+  // An empty predicate ({}, or only degenerate combinators) means no
+  // rule was supplied — the admin UI emits such blanks, and they must
+  // NOT activate the gate (a blank active:{} evaluates false and would
+  // otherwise dim every tile).
+  if (
+    tile.active &&
+    !isEmptyPredicate(tile.active) &&
+    !evalPredicate(tile.active, cache, now) &&
+    state === "green"
+  ) {
+    state = "neutral";
   }
 
   // Stale display value: if the designated display check's input is

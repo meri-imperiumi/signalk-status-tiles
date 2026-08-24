@@ -47,6 +47,47 @@ describe("checks", () => {
     );
   });
 
+  test("boolean: display defaults OK / NOT OK, overridable; stale => none", () => {
+    const c = cacheWith({ bilge: true, pump: false });
+    // Default labels: good => OK, bad => NOT OK.
+    const bad = evalCheck({ type: "boolean", path: "bilge", display: true }, c);
+    assert.strictEqual(bad.state, "red");
+    assert.strictEqual(bad.displayValue, "NOT OK");
+    assert.strictEqual(bad.reason, "", "path reason suppressed when displayed");
+    const good = evalCheck({ type: "boolean", path: "pump", display: true }, c);
+    assert.strictEqual(good.state, "green");
+    assert.strictEqual(good.displayValue, "OK");
+    // Custom labels, e.g. an engine-running path where false is bad.
+    const eng = evalCheck(
+      {
+        type: "boolean",
+        path: "eng",
+        badWhen: false,
+        okLabel: "RUNNING",
+        notOkLabel: "STOPPED",
+        display: true,
+      },
+      cacheWith({ eng: true }),
+    );
+    assert.strictEqual(eng.state, "green");
+    assert.strictEqual(eng.displayValue, "RUNNING");
+    // Undesignated: no displayValue, path reason kept.
+    const plain = evalCheck({ type: "boolean", path: "bilge" }, c);
+    assert.strictEqual(plain.displayValue, undefined);
+    assert.strictEqual(plain.reason, "bilge");
+    // Stale display input: no displayValue (tile normalizes to "—",
+    // SPEC §3.4).
+    const stale = new PathCache();
+    stale.set("bilge", true, Date.now() - 120000);
+    assert.strictEqual(
+      evalCheck(
+        { type: "boolean", path: "bilge", display: true, staleMs: 60000 },
+        stale,
+      ).displayValue,
+      undefined,
+    );
+  });
+
   test("banded: warn/crit on low and high; worst wins", () => {
     const c = cacheWith({ soc: 0.15, v: 14.5 });
     assert.strictEqual(

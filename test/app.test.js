@@ -73,7 +73,15 @@ globalThis.document = {
   createElement: (tag) => new FakeElement(tag),
 };
 globalThis.window = {
-  location: { protocol: "http:", host: "signalk.local" },
+  location: {
+    protocol: "http:",
+    host: "signalk.local",
+    /** @type {number} */
+    reloadCalls: 0,
+    reload() {
+      this.reloadCalls++;
+    },
+  },
   localStorage: null,
 };
 
@@ -183,11 +191,6 @@ const CONFIG_A = configWith(0.4, 0);
 // the stream re-subscription pick up the new config.
 const CONFIG_B = configWith(0.3, 1);
 
-/** @param {number} ms */
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 async function flush(microtasks = 5) {
   for (let i = 0; i < microtasks; i++) await Promise.resolve();
 }
@@ -222,22 +225,19 @@ test("initial load: engine built from the REST envelope, hash path subscribed", 
     paths.includes("electrical.batteries.0.capacity.stateOfCharge"),
     "check path subscribed",
   );
+  // The reliable reload backstop: a poll timer is running.
+  assert.ok(el.pollTimer != null, "config poll scheduled");
   // On-connect verification: same hash => no extra swap.
   assert.equal(el.configHash, "hash-a");
   el.disconnectedCallback();
+  assert.equal(el.pollTimer, null, "poll timer cleared on disconnect");
 });
 
-test("reload actually applies the new config to evaluation", async () => {
-  // Same path, different threshold: with SoC=0.4, config LOW (warn 0.2)
-  // => amber (value above the high-warn); config HIGH (warn 0.6) =>
-  // green (value below). A reload that only swaps the stream paths but
-  // keeps evaluating the OLD engine would leave the state unchanged —
-  // this catches a real apply bug.
-  const low = configWith(0.2, 0);
-  const high = configWith(0.6, 0);
+test("a differing hash delta reloads the page", async () => {
   FakeWebSocket.sockets = [];
   server.statusCode = 200;
-  server.configBody = { config: low, configHash: "h-low" };
+  server.configBody = { config: CONFIG_A, configHash: "hash-a" };
+  window.location.reloadCalls = 0;
 
   const el = mount();
   await el.connectedCallback();
@@ -245,49 +245,21 @@ test("reload actually applies the new config to evaluation", async () => {
   const socket = FakeWebSocket.sockets.at(-1);
   socket.serverOpen();
   await flush();
-  // Seed SoC=0.4 (above the high-warn=0.2 => amber under `low`).
-  socket.serverMessage(
-    JSON.stringify({
-      context: "vessels.self",
-      updates: [
-        {
-          values: [
-            {
-              path: "electrical.batteries.0.capacity.stateOfCharge",
-              value: 0.4,
-            },
-          ],
-        },
-      ],
-    }),
-  );
-  await flush();
-  assert.match(
-    el.gridEl.gridEl.children[0].className,
-    /alarm/,
-    "above the low threshold => amber alarm",
-  );
 
-  // Server-side edit: new config with a much lower warn threshold.
-  server.configBody = { config: high, configHash: "h-high" };
+  // Server-side edit: plugin restarts, publishes a new hash, and REST
+  // serves the new config+hash. The delta triggers a re-fetch to
+  // confirm, then a full page reload (no in-page hot-swap).
+  server.configBody = { config: CONFIG_B, configHash: "hash-b" };
   socket.serverMessage(
     JSON.stringify({
       context: "vessels.self",
       updates: [
-        { values: [{ path: "statusTiles.configHash", value: "h-high" }] },
+        { values: [{ path: "statusTiles.configHash", value: "hash-b" }] },
       ],
     }),
   );
   await flush(10);
-  assert.equal(el.configHash, "h-high");
-  // Same SoC=0.4 is now BELOW high-warn=0.6 => green. The new engine
-  // (not the old one) must be evaluating the cached value. Green is
-  // `lit` but NOT `alarm`.
-  assert.doesNotMatch(
-    el.gridEl.gridEl.children[0].className,
-    /alarm/,
-    "new threshold applied after reload => green",
-  );
+  assert.equal(window.location.reloadCalls, 1, "page reloaded on new hash");
   el.disconnectedCallback();
 });
 
@@ -318,10 +290,11 @@ test("initial load: a config without tiles shows an explicit message", async () 
   assert.match(el.gridEl.errorEl.textContent, /No tiles configured/);
   el.disconnectedCallback();
 });
-test("hash delta triggers re-fetch and engine swap with new subscriptions", async () => {
+test("reconnect re-verifies and reloads if the hash differs", async () => {
   FakeWebSocket.sockets = [];
   server.statusCode = 200;
   server.configBody = { config: CONFIG_A, configHash: "hash-a" };
+  window.location.reloadCalls = 0;
 
   const el = mount();
   await el.connectedCallback();
@@ -329,42 +302,19 @@ test("hash delta triggers re-fetch and engine swap with new subscriptions", asyn
   const socket = FakeWebSocket.sockets.at(-1);
   socket.serverOpen();
   await flush();
+  assert.equal(window.location.reloadCalls, 0, "initial connect: hash matches");
 
-  // Server-side edit: plugin restarts, publishes new hash, REST serves
-  // the new config.
+  // While the link is down the plugin is reconfigured (new hash). The
+  // delta was missed, so the on-reconnect verification re-fetches and
+  // reloads to catch up.
   server.configBody = { config: CONFIG_B, configHash: "hash-b" };
-  socket.serverMessage(
-    JSON.stringify({
-      context: "vessels.self",
-      updates: [
-        { values: [{ path: "statusTiles.configHash", value: "hash-b" }] },
-      ],
-    }),
-  );
+  socket.serverOpen(); // simulate reconnect firing the open handler
   await flush(10);
-
-  assert.equal(el.configHash, "hash-b");
-  assert.deepEqual(el.config, CONFIG_B);
-  // Stream re-subscribed: setPaths closed the old socket and the
-  // immediate reconnect (no retry interval) opened a new one.
-  assert.ok(socket.closed, "old socket closed for re-subscription");
-  await sleep(20); // reconnect is scheduled with 0 delay
-  const newSocket = FakeWebSocket.sockets.at(-1);
-  assert.notEqual(newSocket, socket);
-  newSocket.serverOpen();
-  await flush();
-  const newPaths = subscribePaths(newSocket);
-  assert.ok(
-    newPaths.includes("electrical.batteries.1.capacity.stateOfCharge"),
-    "re-subscribed to the new config's paths",
+  assert.equal(
+    window.location.reloadCalls,
+    1,
+    "reconnect with a new hash reloads",
   );
-  assert.ok(
-    !newPaths.includes("electrical.batteries.0.capacity.stateOfCharge"),
-    "old path dropped from subscriptions",
-  );
-  // Reconnect verification with matching hash: engine not swapped again.
-  assert.equal(el.configHash, "hash-b");
-  assert.ok(renderedChildren(el) === 2);
   el.disconnectedCallback();
 });
 
@@ -391,6 +341,61 @@ test("same-hash delta does not reload", async () => {
   );
   await flush();
   assert.equal(server.calls, callsBefore, "no re-fetch for same hash");
+  el.disconnectedCallback();
+});
+
+test("REST returns no hash: first delta becomes baseline, a later change reloads", async () => {
+  // Some server setups serve /config without a configHash (older
+  // handler, stale closure). The stream delta is the source of truth
+  // there: the first delta we see must NOT reload (it describes the
+  // config we already booted with), but a subsequent differing delta
+  // (a real save) must reload.
+  FakeWebSocket.sockets = [];
+  server.statusCode = 200;
+  server.configBody = { config: CONFIG_A, configHash: null };
+  window.location.reloadCalls = 0;
+
+  const el = mount();
+  await el.connectedCallback();
+  await flush();
+  assert.equal(el.configHash, null, "boot saw no REST hash");
+  const socket = FakeWebSocket.sockets.at(-1);
+  socket.serverOpen();
+  await flush();
+  assert.equal(
+    window.location.reloadCalls,
+    0,
+    "reconnect verify: no hash -> no reload",
+  );
+
+  // First delta: adopts the hash as the baseline, does NOT reload.
+  socket.serverMessage(
+    JSON.stringify({
+      context: "vessels.self",
+      updates: [
+        { values: [{ path: "statusTiles.configHash", value: "hash-a" }] },
+      ],
+    }),
+  );
+  await flush();
+  assert.equal(el.configHash, "hash-a", "first delta adopted as baseline");
+  assert.equal(
+    window.location.reloadCalls,
+    0,
+    "baseline delta does not reload",
+  );
+
+  // A real save: differing hash -> reload.
+  socket.serverMessage(
+    JSON.stringify({
+      context: "vessels.self",
+      updates: [
+        { values: [{ path: "statusTiles.configHash", value: "hash-b" }] },
+      ],
+    }),
+  );
+  await flush(10);
+  assert.equal(window.location.reloadCalls, 1, "changed delta reloads");
   el.disconnectedCallback();
 });
 

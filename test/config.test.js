@@ -143,6 +143,67 @@ describe("config validation", () => {
     );
   });
 
+  test("tile active predicate is validated (empty/depth)", () => {
+    const empty = {
+      tiles: [
+        {
+          id: "ac",
+          label: "AC",
+          active: { allOf: [], not: { whenMissing: "false" } },
+          checks: [{ type: "boolean", path: "p" }],
+        },
+      ],
+    };
+    assert.ok(
+      validateConfig(empty).errors.some((e) =>
+        e.includes("active predicate is empty"),
+      ),
+    );
+    // Depth cap (SPEC §9): an active predicate nested deeper than the
+    // cap is rejected with guidance to split into a named context.
+    const deep = {
+      tiles: [
+        {
+          id: "ac",
+          label: "AC",
+          active: {
+            path: "a",
+            compare: "equals",
+            value: "1",
+            allOf: [
+              {
+                allOf: [
+                  { allOf: [{ path: "b", compare: "equals", value: "2" }] },
+                ],
+              },
+            ],
+          },
+          checks: [{ type: "boolean", path: "p" }],
+        },
+      ],
+    };
+    assert.ok(
+      validateConfig(deep).errors.some((e) =>
+        e.includes("active predicate nests to depth"),
+      ),
+    );
+    // A well-formed active predicate is accepted.
+    const ok = {
+      tiles: [
+        {
+          id: "ac",
+          label: "AC",
+          active: { path: "inverter", compare: "equals", value: "on" },
+          checks: [{ type: "boolean", path: "p" }],
+        },
+      ],
+    };
+    assert.ok(
+      !validateConfig(ok).errors.some((e) => e.includes("active")),
+      "well-formed active predicate accepted",
+    );
+  });
+
   test("degenerate combinator predicates are errors, not silent always-on", () => {
     // The admin UI emits `allOf: []` / `not: {}` when a combinator is
     // picked but never filled in. Vacuously true at evaluation — flag

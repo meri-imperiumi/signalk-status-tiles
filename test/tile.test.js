@@ -88,6 +88,129 @@ describe("tile aggregation", () => {
     assert.ok(t.reason.includes("unknown context"));
   });
 
+  test("active predicate false downgrades green->neutral; amber/red pass through; display still shows", () => {
+    // A green check with the active predicate false => neutral, but the
+    // display value (92%) still shows.
+    const green = new PathCache();
+    green.set("soc", 0.92);
+    green.set("inverter", "on");
+    const t = evalTile(
+      {
+        id: "ac",
+        label: "AC",
+        active: {
+          path: "inverter",
+          compare: "equals",
+          value: "on",
+          whenMissing: "false",
+        },
+        checks: [
+          {
+            type: "banded",
+            path: "soc",
+            low: { warn: 0.3 },
+            display: true,
+            unit: "ratio",
+          },
+        ],
+      },
+      green,
+      new Map(),
+    );
+    // inverter=on makes the predicate true ("active" when equals on) ->
+    // normal green. Flip to off to see the downgrade.
+    green.set("inverter", "off");
+    const off = evalTile(
+      {
+        id: "ac",
+        label: "AC",
+        active: {
+          path: "inverter",
+          compare: "equals",
+          value: "on",
+          whenMissing: "false",
+        },
+        checks: [
+          {
+            type: "banded",
+            path: "soc",
+            low: { warn: 0.3 },
+            display: true,
+            unit: "ratio",
+          },
+        ],
+      },
+      green,
+      new Map(),
+    );
+    assert.strictEqual(off.state, "neutral", "green downgraded to neutral");
+    assert.strictEqual(off.displayValue, "92%", "display still shows");
+
+    // A red check with the predicate false => red passes through.
+    const red = new PathCache();
+    red.set("soc", 0.1); // below crit
+    red.set("inverter", "off");
+    const r = evalTile(
+      {
+        id: "ac",
+        label: "AC",
+        active: {
+          path: "inverter",
+          compare: "equals",
+          value: "on",
+          whenMissing: "false",
+        },
+        checks: [
+          { type: "banded", path: "soc", low: { warn: 0.3, crit: 0.2 } },
+        ],
+      },
+      red,
+      new Map(),
+    );
+    assert.strictEqual(r.state, "red", "red passes through when inactive");
+  });
+
+  test("blank/empty active predicate is no-op (admin UI emits {} for blank fields)", () => {
+    // The admin UI leaves `active: {}` (or degenerate combinators) when
+    // the field is opened but never filled in. That must NOT activate
+    // the gate — an empty predicate evaluates false, which would dim
+    // every such tile. Only a REAL supplied predicate downgrades.
+    const c = new PathCache();
+    c.set("soc", 0.92);
+    const greenCheck = {
+      type: "banded",
+      path: "soc",
+      low: { warn: 0.3 },
+      display: true,
+      unit: "ratio",
+    };
+    for (const blank of [
+      {},
+      { allOf: [] },
+      { not: { whenMissing: "false" } },
+      { allOf: [], anyOf: [], not: { whenMissing: "false" } },
+    ]) {
+      const t = evalTile(
+        { id: "ac", label: "AC", active: blank, checks: [greenCheck] },
+        c,
+        new Map(),
+      );
+      assert.strictEqual(
+        t.state,
+        "green",
+        `blank active ${JSON.stringify(blank)} must not downgrade`,
+      );
+      assert.strictEqual(t.displayValue, "92%", "display still shows");
+    }
+    // No active field at all: unaffected.
+    const none = evalTile(
+      { id: "ac", label: "AC", checks: [greenCheck] },
+      c,
+      new Map(),
+    );
+    assert.strictEqual(none.state, "green");
+  });
+
   test("display value from the designated check", () => {
     const c = new PathCache();
     c.set("soc", 0.92);

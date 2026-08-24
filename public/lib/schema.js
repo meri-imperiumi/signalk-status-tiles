@@ -58,7 +58,7 @@ function predicateSchema() {
       compare: {
         type: "string",
         title: "Comparison",
-        enum: ["equals", "gt", "gte", "lt", "lte"],
+        enum: ["equals", "notEquals", "gt", "gte", "lt", "lte"],
       },
       value: {
         type: "string",
@@ -118,7 +118,7 @@ function leafPredicateSchema() {
       compare: {
         type: "string",
         title: "Comparison",
-        enum: ["equals", "gt", "gte", "lt", "lte"],
+        enum: ["equals", "notEquals", "gt", "gte", "lt", "lte"],
       },
       value: { type: "string", title: "Compare against (literal)" },
       valuePath: {
@@ -160,6 +160,21 @@ const checkVariants = [
         default: true,
         description: "Which truthiness means 'bad' (default: true is bad)",
       },
+      okLabel: {
+        type: "string",
+        title: "Label when OK",
+        default: "OK",
+        description:
+          "Headline text for the good state (shown when this check is designated Display). Defaults to OK; e.g. RUNNING for an engine-running path.",
+      },
+      notOkLabel: {
+        type: "string",
+        title: "Label when not OK",
+        default: "NOT OK",
+        description:
+          "Headline text for the bad state (shown when this check is designated Display). Defaults to NOT OK; e.g. STOPPED.",
+      },
+      display: displayField,
       reason: reasonField,
       staleState: staleStateField,
       staleMs: staleMsField("Staleness threshold (ms)"),
@@ -533,7 +548,13 @@ export function buildSchema() {
               type: "string",
               title: "Context (optional)",
               description:
-                "If set and inactive, tile is neutral and checks do not run",
+                "If set and the context is inactive, the tile is hidden from the dashboard (not shown dimmed).",
+            },
+            active: {
+              ...predicateSchema(),
+              title: "Active when (optional)",
+              description:
+                "A per-tile predicate. When it evaluates false, checks still run and the display value still shows, but the tile's state is downgraded from green to neutral (dimmed) — amber/red pass through so a real problem still alarms. Use for conditions the named contexts don't express, e.g. the AC Power tile is neutral (not green) when the inverter is off: path electrical.inverters.294.mode, compare notEquals, value 'off'.",
             },
             size: {
               type: "string",

@@ -35,11 +35,15 @@ const SAMPLE = {
 function fakeApp({ withHandleMessage = true } = {}) {
   /** @type {Array<{id: string, msg: object}>} */
   const messages = [];
+  /** @type {string[]} */
+  const debugLogs = [];
   return {
     messages,
+    debugLogs,
     setPluginStatus: () => {},
     warn: () => {},
     error: () => {},
+    debug: (s) => debugLogs.push(s),
     ...(withHandleMessage
       ? { handleMessage: (id, msg) => messages.push({ id, msg }) }
       : {}),
@@ -103,6 +107,12 @@ test("start publishes the config hash as a delta on the stream", () => {
   const value = msg.updates[0].values[0];
   assert.equal(value.path, CONFIG_HASH_PATH);
   assert.equal(value.value, configHash(SAMPLE));
+  // start() logs the hash it booted with (server-side debug trail for
+  // tracing config-reload problems).
+  assert.ok(
+    app.debugLogs.some((s) => s.includes(configHash(SAMPLE))),
+    "start() logged the config hash",
+  );
 });
 
 test("a restart with changed config publishes a new hash", () => {

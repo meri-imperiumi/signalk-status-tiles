@@ -82,6 +82,7 @@ export default function (app) {
       }
       pluginConfig = config || {};
       pluginConfigHash = configHash(pluginConfig);
+      app.debug?.(`[status-tiles] start() configHash=${pluginConfigHash}`);
       // Signal config changes to connected webapps. Server-side edits
       // restart the plugin (stop + start), so start() is exactly the
       // moment a new config becomes visible: publish its hash as a
