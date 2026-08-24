@@ -19,9 +19,9 @@ import { evalTile } from "./tile.js";
  * Creates an engine bound to a config. Re-create on config reload.
  *
  * @param {object} config - `{ contexts, tiles, coverage, staleMs }`
- * @param {(tiles: Array, coverage: Array) => void} [onEval] - called on
- *   every re-evaluation with the structured tile outputs and surfaced
- *   coverage anomalies
+ * @param {(tiles: Array, coverage: Array, activeContexts: Array<{id: string, label: string}>) => void} [onEval] - called on
+ *   every re-evaluation with the structured tile outputs, surfaced
+ *   coverage anomalies, and the currently-active contexts (chrome bar)
  */
 export function createEngine(config, onEval) {
   const cfg = unwrapConfig(config);
@@ -82,6 +82,17 @@ export function createEngine(config, onEval) {
       evalTile(t, cache, contexts, now),
     );
 
+    // Active contexts for the chrome bar: every declared context whose
+    // predicate currently holds (label falls back to id). Rendered by
+    // the UI next to the vessel name — "the boat's current situation"
+    // is exactly what contexts express (SPEC §3.1).
+    const activeContexts = [];
+    for (const [id, ctx] of contexts) {
+      if (evalPredicate(ctx.predicate, cache, now)) {
+        activeContexts.push({ id, label: ctx.label || id });
+      }
+    }
+
     // Coverage: compute currently-inactive-context-owned paths so they
     // count as unclaimed for this tick (SPEC §10).
     const inactiveContextPaths = computeInactiveContextPaths(now);
@@ -96,7 +107,7 @@ export function createEngine(config, onEval) {
     }
     const { surfaced } = rankAndAssign(anomalies, firstSeen, slotCount, now);
 
-    onEval?.(tileOut, surfaced);
+    onEval?.(tileOut, surfaced, activeContexts);
   }
 
   /**

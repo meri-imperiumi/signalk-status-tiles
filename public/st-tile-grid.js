@@ -29,19 +29,107 @@ class StTileGrid extends HTMLElement {
     const style = document.createElement("style");
     style.textContent = `
       :host {
-        display: block;
+        display: flex;
+        flex-direction: column;
         height: 100%;
         background: #05070a;
         color: #d8e2ee;
         font-family: "Eurostile", "Bank Gothic", "Oswald", system-ui, sans-serif;
         --tile-radius: clamp(0.8vw, 1vw, 1.4vh);
       }
+      /* Chrome band (SPEC §11.1): constant-height top strip holding
+         vessel identity, active contexts, and the link indicator — plus
+         the clock on the right. Always present and fixed-height, so the
+         tile grid below never re-flows when its contents change. Its
+         content is subordinate chrome (SPEC §11.2): small, low-contrast,
+         never competing with tiles for a glance. */
+      .chrome {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1.5vw;
+        flex: 0 0 auto;
+        height: 4.6vh;
+        padding: 0 2vw;
+        border-bottom: 1px solid #141d28;
+        background: #070b11;
+        font-size: 1.9vh;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        white-space: nowrap;
+        overflow: hidden;
+      }
+      .chrome-left,
+      .chrome-right {
+        display: flex;
+        align-items: center;
+        gap: 1.2vw;
+        min-width: 0;
+        overflow: hidden;
+      }
+      .vessel {
+        font-weight: 700;
+        color: #c7d6e6;
+        letter-spacing: 0.22em;
+      }
+      .vessel:empty::after {
+        content: "—";
+        color: #44535f;
+      }
+      /* Active contexts: the boat's current situation ("anchored",
+         "underway"…) — exactly what contexts express (SPEC §3.1).
+         Dimmed chips so several can coexist without noise. */
+      .ctx {
+        padding: 0.25vh 0.9vw;
+        border: 1px solid #2a3a4c;
+        border-radius: 0;
+        clip-path: polygon(0.6vw 0, 100% 0, calc(100% - 0.6vw) 100%, 0 100%);
+        color: #8fa5ba;
+        font-size: 1.6vh;
+        letter-spacing: 0.18em;
+      }
+      /* Connectivity indicator: dot + word. Steady green "live" while
+         the Signal K stream is open; red pulse while connecting or
+         reconnecting so a drop is visible instantly (SPEC §2/§4) rather
+         than waiting for staleness to degrade tiles. */
+      .link {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.6vw;
+        color: #74879b;
+        font-size: 1.6vh;
+        letter-spacing: 0.18em;
+      }
+      .link .dot {
+        width: 1.1vh;
+        height: 1.1vh;
+        background: #37c26a;
+        box-shadow: 0 0 1vh #37c26a;
+      }
+      .link.lost {
+        color: #ff8a7a;
+      }
+      .link.lost .dot {
+        background: #ff5a5a;
+        box-shadow: 0 0 1.2vh #ff5a5a;
+        animation: linkpulse 1.1s ease-in-out infinite;
+      }
+      @keyframes linkpulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.25; }
+      }
+      .clock {
+        color: #9fb0c2;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0.12em;
+        font-weight: 600;
+      }
       .grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(20vw, 1fr));
         grid-auto-rows: minmax(22vh, 1fr);
         gap: 1.4vh 1.4vw;
-        height: 100%;
+        flex: 1 1 auto;
         padding: 2vh 2vw;
         box-sizing: border-box;
       }
@@ -144,15 +232,114 @@ class StTileGrid extends HTMLElement {
         letter-spacing: 0.04em;
       }
     `;
+    const chrome = document.createElement("div");
+    chrome.className = "chrome";
+    const chromeLeft = document.createElement("div");
+    chromeLeft.className = "chrome-left";
+    const vessel = document.createElement("span");
+    vessel.className = "vessel";
+    /** @type {HTMLElement} */
+    this.ctxSlot = document.createElement("span");
+    this.ctxSlot.style.display = "contents";
+    const link = document.createElement("span");
+    link.className = "link";
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    /** @type {HTMLElement} */
+    this.linkText = document.createElement("span");
+    this.linkText.textContent = "live";
+    link.append(dot, this.linkText);
+    chromeLeft.append(vessel, this.ctxSlot, link);
+    const chromeRight = document.createElement("div");
+    chromeRight.className = "chrome-right";
+    /** @type {HTMLElement} */
+    this.clockEl = document.createElement("span");
+    this.clockEl.className = "clock";
+    chromeRight.append(this.clockEl);
+    chrome.append(chromeLeft, chromeRight);
     const grid = document.createElement("div");
     grid.className = "grid";
     const error = document.createElement("div");
     error.className = "error";
-    this.shadowRoot.append(style, grid, error);
+    this.shadowRoot.append(style, chrome, grid, error);
     /** @type {HTMLElement} */
     this.gridEl = grid;
     /** @type {HTMLElement} */
     this.errorEl = error;
+    /** @type {HTMLElement} */
+    this.vesselEl = vessel;
+    /** @type {HTMLElement} */
+    this.linkEl = link;
+    /** @type {number|null} */
+    this.clockTimer = null;
+    this.updateClock();
+  }
+
+  connectedCallback() {
+    // Clock ticks on its own 1s cadence — purely presentational, kept
+    // out of the engine's evaluation loop (SPEC §8 triggers are for tile
+    // state, not chrome).
+    if (this.clockTimer == null) {
+      this.clockTimer = setInterval(() => this.updateClock(), 1000);
+    }
+  }
+
+  disconnectedCallback() {
+    if (this.clockTimer != null) clearInterval(this.clockTimer);
+    this.clockTimer = null;
+  }
+
+  /** Formats the local date/time into the chrome's clock element. */
+  updateClock() {
+    const d = new Date();
+    const date = d.toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+    });
+    const time = d.toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+    this.clockEl.textContent = `${date} ${time}`;
+  }
+
+  /** Vessel name from the `name` path (set by the app on each eval). */
+  set vessel(name) {
+    this.vesselEl.textContent = name || "";
+  }
+
+  /**
+   * Active contexts (from the engine's evaluation), rendered as dimmed
+   * chips next to the vessel name. Empty array clears them.
+   * @param {Array<{id: string, label: string}>} list
+   */
+  set activeContexts(list) {
+    this.ctxSlot.replaceChildren(
+      ...(list || []).map((c) => {
+        const el = document.createElement("span");
+        el.className = "ctx";
+        el.textContent = c.label || c.id;
+        return el;
+      }),
+    );
+  }
+
+  /**
+   * Link-state indicator. Accepts the stream's state string:
+   * "open" (steady green), "connecting"/"retrying" (red pulse).
+   * @param {string} state
+   */
+  set link(state) {
+    const live = state === "open";
+    this.linkEl.classList.toggle("lost", !live);
+    // "live" when the stream is open; otherwise the ongoing attempt in
+    // plain words — "connecting" on first connect, "reconnecting"
+    // after a drop.
+    const word = state === "retrying" ? "reconnecting" : state || "connecting";
+    this.linkText.textContent = live ? "live" : word;
   }
 
   set error(msg) {

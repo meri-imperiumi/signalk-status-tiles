@@ -8,6 +8,7 @@
 
 import { createEngine } from "./lib/engine.js";
 import { collectPaths } from "./lib/paths.js";
+import { fetchVesselName } from "./lib/vessel.js";
 import { SignalKStream } from "./st-stream.js";
 import "./st-tile-grid.js";
 
@@ -45,11 +46,28 @@ class StApp extends HTMLElement {
       return;
     }
 
-    const paths = collectPaths(this.config);
-    this.engine = createEngine(this.config, (tiles, coverage) => {
-      this.gridEl.tiles = tiles;
-      this.gridEl.coverage = coverage;
+    // Vessel name: static identity, never re-broadcast as a delta after
+    // we subscribe (streams are change-driven), so fetch it once via the
+    // standard REST API. The stream subscription below covers a rare
+    // live rename; the REST value paints first.
+    fetchVesselName().then((name) => {
+      if (name) this.gridEl.vessel = name;
     });
+
+    // Watched paths: everything the engine needs (contexts, checks,
+    // footers, coverage candidates) plus `name` for the chrome bar's
+    // vessel identity — same stream, one extra subscription.
+    const paths = [...new Set([...collectPaths(this.config), "name"])];
+    this.engine = createEngine(
+      this.config,
+      (tiles, coverage, activeContexts) => {
+        this.gridEl.tiles = tiles;
+        this.gridEl.coverage = coverage;
+        this.gridEl.activeContexts = activeContexts;
+        const nm = this.engine.cache.value("name");
+        if (typeof nm === "string" && nm) this.gridEl.vessel = nm;
+      },
+    );
 
     const fail = (where, err) => {
       console.error(`status-tiles ${where}:`, err);
@@ -57,35 +75,26 @@ class StApp extends HTMLElement {
     };
 
     // Delta-driven: feed every raw delta into the engine and re-evaluate.
-    this.stream = new SignalKStream(paths, (delta) => {
-      if (!this.engine) return;
-      try {
-        if (delta.updates) {
-          for (const u of delta.updates) {
-            for (const v of u.values || [])
-              console.log(
-                "[status-tiles] value",
-                v.path,
-                "=",
-                v.value,
-                "ts",
-                u.timestamp,
-              );
-            for (const m of u.meta || [])
-              console.log(
-                "[status-tiles] meta",
-                m.path,
-                "zones",
-                m.value?.zones?.length,
-              );
-          }
+    // Link state feeds the chrome bar's connectivity indicator: the
+    // stream knows the link died instantly, while staleness takes ~60s
+    // to degrade tiles (SPEC §4) — the dot answers "why" right away.
+    this.stream = new SignalKStream(
+      paths,
+      (delta) => {
+        if (!this.engine) return;
+        try {
+          this.engine.onDelta(delta);
+          this.engine.evaluate();
+        } catch (err) {
+          fail("evaluating delta", err);
         }
-        this.engine.onDelta(delta);
-        this.engine.evaluate();
-      } catch (err) {
-        fail("evaluating delta", err);
-      }
-    });
+      },
+      {
+        onStatus: (s) => {
+          this.gridEl.link = s.state;
+        },
+      },
+    );
     this.stream.connect();
 
     // Timer-driven: re-evaluate on a fixed interval regardless of new

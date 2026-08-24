@@ -211,4 +211,43 @@ describe("engine", () => {
     assert.strictEqual(out.at(-1)[0].state, "green");
     assert.notStrictEqual(out.at(-1)[0].reason, "agreement input stale/absent");
   });
+
+  test("evaluate reports currently-active contexts for the chrome bar", () => {
+    const cfg = anchorConfig();
+    // Give the context a label; add a second context that stays inactive.
+    cfg.contexts[0].label = "At anchor";
+    cfg.contexts.push({
+      id: "underway",
+      label: "Underway",
+      predicate: {
+        path: "navigation.state",
+        compare: "equals",
+        value: "sailing",
+      },
+    });
+    const seen = [];
+    const e = createEngine(cfg, (_t, _c, active) => seen.push(active));
+    e.onDelta(delta("navigation.state", "anchored"));
+    e.evaluate();
+    // Active context surfaces with its label; inactive one absent.
+    assert.deepStrictEqual(seen.at(-1), [
+      { id: "anchored", label: "At anchor" },
+    ]);
+    // Falls back to id when no label.
+    delete cfg.contexts[0].label;
+    e.evaluate();
+    assert.deepStrictEqual(seen.at(-1), [
+      { id: "anchored", label: "anchored" },
+    ]);
+    // Predicate flips false → context drops out.
+    e.onDelta(delta("navigation.state", "sailing"));
+    e.evaluate();
+    assert.deepStrictEqual(seen.at(-1), [
+      { id: "underway", label: "Underway" },
+    ]);
+    // Inputs absent → contexts fail closed → none active (SPEC §3.1).
+    const e2 = createEngine(cfg, (_t, _c, active) => seen.push(active));
+    e2.evaluate();
+    assert.deepStrictEqual(seen.at(-1), []);
+  });
 });
