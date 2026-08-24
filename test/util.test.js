@@ -55,7 +55,7 @@ describe("util", () => {
     assert.strictEqual(formatDisplayValue(285.76), "286");
     assert.strictEqual(formatDisplayValue(285.76, undefined), "286");
     assert.strictEqual(formatDisplayValue(42.5), "42.5");
-    assert.strictEqual(formatDisplayValue(3.14159), "3.14");
+    assert.strictEqual(formatDisplayValue(1.23456), "1.23");
   });
 
   test("formatDisplayValue returns dash for non-finite input", () => {
@@ -91,7 +91,7 @@ describe("util", () => {
     assert.strictEqual(formatSmartNumber(123.456), "123");
     assert.strictEqual(formatSmartNumber(1234.5), "1235");
     // sign preserved; -0 avoided
-    assert.strictEqual(formatSmartNumber(-3.14159), "-3.14");
+    assert.strictEqual(formatSmartNumber(-Math.PI), "-3.14");
     assert.strictEqual(formatSmartNumber(-0), "0.00");
     assert.strictEqual(formatSmartNumber(NaN), "—");
   });

@@ -126,8 +126,9 @@ class StTileGrid extends HTMLElement {
       }
       .grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(20vw, 1fr));
-        grid-auto-rows: minmax(22vh, 1fr);
+        grid-auto-flow: column;
+        grid-template-rows: repeat(var(--grid-rows, 3), minmax(22vh, 1fr));
+        grid-auto-columns: minmax(18vw, 1fr);
         gap: 1.4vh 1.4vw;
         flex: 1 1 auto;
         padding: 2vh 2vw;
@@ -444,6 +445,14 @@ class StTileGrid extends HTMLElement {
       s.className = "tile slot";
       this.gridEl.append(s);
     }
+    // Column-wise flow: choose a row count that keeps columns wide
+    // (~18vw) and the grid roughly balanced. Aim for 3 rows; use more
+    // rows only when tiles would otherwise overflow into too many thin
+    // columns. Total cells = tiles + reserved slots.
+    const total = (list?.length ?? 0) + (this._slotCount ?? 0);
+    let rows = 3;
+    if (total <= 3) rows = total || 1;
+    this.gridEl.style.setProperty("--grid-rows", String(rows));
   }
 
   /**

@@ -94,7 +94,7 @@ describe("tile aggregation", () => {
     const green = new PathCache();
     green.set("soc", 0.92);
     green.set("inverter", "on");
-    const t = evalTile(
+    evalTile(
       {
         id: "ac",
         label: "AC",
