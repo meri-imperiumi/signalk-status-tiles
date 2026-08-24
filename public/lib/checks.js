@@ -15,6 +15,7 @@
 import { evalPredicate } from "./context.js";
 import { DEFAULT_STALE_MS } from "./staleness.js";
 import {
+  displayUnitsForPath,
   formatDisplayValue,
   formatSmartNumber,
   unwrap,
@@ -397,7 +398,13 @@ function evalZone(check, cache, now) {
     state,
     reason: check.reason || `${check.path} ${zoneName}`,
     displayValue: check.display
-      ? formatDisplayValue(v, cache.metaFor(check.path)?.displayUnits)
+      ? formatDisplayValue(
+          v,
+          displayUnitsForPath(
+            check.path,
+            cache.metaFor(check.path)?.displayUnits,
+          ),
+        )
       : undefined,
   };
 }
@@ -571,7 +578,10 @@ function collectReferencedPaths(pred, out = new Set()) {
  * @returns {string}
  */
 function formatBandedValue(v, check, cache) {
-  const displayUnits = cache.metaFor(check.path)?.displayUnits;
+  const displayUnits = displayUnitsForPath(
+    check.path,
+    cache.metaFor(check.path)?.displayUnits,
+  );
   if (
     displayUnits?.formula ||
     displayUnits?.displayFormat ||
@@ -621,7 +631,10 @@ function formatNum(n) {
 function formatScalar(raw, cache, path) {
   const n = valueToNumber(raw);
   if (Number.isFinite(n)) {
-    return formatDisplayValue(n, cache.metaFor(path)?.displayUnits);
+    return formatDisplayValue(
+      n,
+      displayUnitsForPath(path, cache.metaFor(path)?.displayUnits),
+    );
   }
   return String(raw);
 }

@@ -12,7 +12,11 @@
 import { evalCheck } from "./checks.js";
 import { evalPredicate, isEmptyPredicate } from "./context.js";
 import { worst } from "./states.js";
-import { formatDisplayValue, valueToNumber } from "./util.js";
+import {
+  displayUnitsForPath,
+  formatDisplayValue,
+  valueToNumber,
+} from "./util.js";
 
 /**
  * Evaluates a single tile against the cache. Returns the structured tile
@@ -146,7 +150,10 @@ function resolveFooter(footer, cache) {
       // Numeric values get display-unit conversion (K→°C, etc.).
       // Strings/booleans (e.g. state enums like "deployed") are shown as-is.
       value = Number.isFinite(n)
-        ? formatDisplayValue(n, footerUnits(meta, f.unit))
+        ? formatDisplayValue(
+            n,
+            displayUnitsForPath(f.path, footerUnits(meta, f.unit)),
+          )
         : String(raw);
     }
     out.push({ label: f.label || f.path, value });

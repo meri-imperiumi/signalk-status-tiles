@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import {
+  displayUnitsForPath,
   formatDisplayValue,
   formatSmartNumber,
   siScale,
@@ -162,5 +163,55 @@ describe("util", () => {
     );
     // Percent stays unscaled and attaches without a space.
     assert.strictEqual(formatDisplayValue(1234, { symbol: "%" }), "1234%");
+  });
+
+  test("displayUnitsForPath: frequency paths keep Hz, ignoring a Hz→RPM formula", () => {
+    // A server may publish a Hz→RPM displayUnits formula for rotation-
+    // rate paths published in Hz. That formula is wrong for a genuine
+    // frequency path, so any path containing "frequency" must drop the
+    // formula and show the raw Hz value with the "Hz" symbol.
+    const rpmFormula = { formula: "value * 60", symbol: "RPM" };
+    assert.deepEqual(
+      displayUnitsForPath(
+        "electrical.inverters.multiplus.acin.frequency",
+        rpmFormula,
+      ),
+      { symbol: "Hz" },
+      "frequency path drops the RPM formula",
+    );
+    // A non-frequency path keeps the server's displayUnits verbatim.
+    assert.strictEqual(
+      displayUnitsForPath("propulsion.engine.revolutions", rpmFormula),
+      rpmFormula,
+    );
+    // Case-insensitive, matches as a substring anywhere in the path.
+    assert.deepEqual(
+      displayUnitsForPath("some.Frequency.value", {
+        formula: "value*60",
+        symbol: "RPM",
+      }),
+      { symbol: "Hz" },
+    );
+    // No displayUnits at all on a frequency path: still resolves to Hz.
+    assert.deepEqual(displayUnitsForPath("x.frequency", undefined), {
+      symbol: "Hz",
+    });
+    // End-to-end: a 50 Hz value on a frequency path formats as "50.0 Hz",
+    // NOT "3000 RPM".
+    assert.strictEqual(
+      formatDisplayValue(
+        50,
+        displayUnitsForPath(
+          "electrical.inverters.multiplus.acin.frequency",
+          rpmFormula,
+        ),
+      ),
+      "50.0 Hz",
+    );
+    // The same value on a rotation path applies the formula -> RPM.
+    assert.strictEqual(
+      formatDisplayValue(50, displayUnitsForPath("engine.rpm", rpmFormula)),
+      "3000 RPM",
+    );
   });
 });

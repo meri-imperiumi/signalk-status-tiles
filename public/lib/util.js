@@ -211,6 +211,31 @@ export function siScale(value, symbol) {
 }
 
 /**
+ * A path-aware displayUnits resolver: applies a frequency override so a
+ * genuine frequency path is shown as Hz, never converted to RPM.
+ *
+ * Why: some Signal K servers publish a Hz→RPM `displayUnits.formula`
+ * for rotation-rate paths that happen to be published in Hz (e.g. an
+ * engine tachometer). That formula is correct for a tachometer but wrong
+ * for an actual frequency path like `…acin.frequency` — the server may
+ * attach the same formula, turning 50 Hz into "3000 RPM" on the tile.
+ *
+ * A path whose name contains the segment "frequency" is, by Signal K
+ * convention, a genuine frequency: the raw value is already in Hz (the
+ * SI base unit for frequency), so we show it as-is with the "Hz" symbol
+ * and drop any formula. SI prefixing still applies (so a notional 1500 Hz
+ * reads "1.5 kHz"), though boat AC/radio frequencies are well under 1000.
+ *
+ * @param {string} path - the Signal K path whose value is being formatted
+ * @param {object|undefined} displayUnits - the server-published `meta.displayUnits`
+ * @returns {object|undefined} - the displayUnits to actually use
+ */
+export function displayUnitsForPath(path, displayUnits) {
+  if (path && /frequency/i.test(path)) return { symbol: "Hz" };
+  return displayUnits;
+}
+
+/**
  * Resolves a Signal K `displayUnits` meta object against a raw value and
  * returns a formatted display string. The server publishes linear/
  * arithmetic formulas (e.g. `value - 273.15` for K→°C) and duration
