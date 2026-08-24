@@ -178,7 +178,9 @@ function evalBanded(check, cache, now) {
   return {
     state,
     reason,
-    displayValue: check.display ? formatBanded(v, check) : undefined,
+    displayValue: check.display
+      ? formatBandedValue(v, check, cache)
+      : undefined,
   };
 }
 
@@ -511,16 +513,33 @@ function collectReferencedPaths(pred, out = new Set()) {
 }
 
 /**
- * Formats a banded value for display. Each check type that produces a
- * display value formats its own (SPEC §3.4).
+ * Formats a banded value for display. Per SPEC §3.4, each check type
+ * that produces a display value formats its own — and the consistent
+ * convention across the numeric check types (zone, agreement) is to
+ * apply the path's published `meta.displayUnits` (formula + symbol +
+ * displayFormat), falling back to the check's inline `unit` only when no
+ * metadata is published. A bare number with no metadata and no inline
+ * unit is shown as-is.
  *
  * @param {number} v
  * @param {object} check
+ * @param {import("./staleness.js").PathCache} cache
  * @returns {string}
  */
-function formatBanded(v, check) {
-  if (check.unit === "%") return `${Math.round(v * 100)}%`;
-  if (check.unit === "ratio") return `${Math.round(v * 100)}%`;
+function formatBandedValue(v, check, cache) {
+  const displayUnits = cache.metaFor(check.path)?.displayUnits;
+  if (
+    displayUnits?.formula ||
+    displayUnits?.displayFormat ||
+    displayUnits?.symbol
+  ) {
+    return formatDisplayValue(v, displayUnits);
+  }
+  // No published displayUnits metadata: fall back to the check's inline
+  // unit (legacy/explicit override path, e.g. a ratio path with no
+  // metadata that the author wants shown as a percentage).
+  if (check.unit === "%" || check.unit === "ratio")
+    return `${Math.round(v * 100)}%`;
   return formatNum(v);
 }
 

@@ -86,6 +86,48 @@ describe("checks", () => {
     assert.strictEqual(r.displayValue, "92%");
   });
 
+  test("banded: display value honors published displayUnits metadata", () => {
+    const c = new PathCache();
+    c.set("electrical.venus.totalPanelPower", 31.776);
+    c.setMeta("electrical.venus.totalPanelPower", {
+      displayUnits: {
+        formula: "value",
+        symbol: "W",
+        displayFormat: "0.00",
+      },
+    });
+    const r = evalCheck(
+      {
+        type: "banded",
+        path: "electrical.venus.totalPanelPower",
+        display: true,
+      },
+      c,
+    );
+    assert.strictEqual(r.displayValue, "31.78 W");
+  });
+
+  test("banded: inline unit is the fallback when no metadata is published", () => {
+    // No metadata on the path: inline unit: "ratio" still renders as %.
+    const c = cacheWith({ soc: 0.92 });
+    const r = evalCheck(
+      { type: "banded", path: "soc", display: true, unit: "ratio" },
+      c,
+    );
+    assert.strictEqual(r.displayValue, "92%");
+    // Metadata wins over an inline unit when both are present.
+    const c2 = new PathCache();
+    c2.set("soc", 0.92);
+    c2.setMeta("soc", {
+      displayUnits: { formula: "value * 100", symbol: "%", displayFormat: "0" },
+    });
+    const r2 = evalCheck(
+      { type: "banded", path: "soc", display: true, unit: "ratio" },
+      c2,
+    );
+    assert.strictEqual(r2.displayValue, "92%");
+  });
+
   test("differential: spread vs warn/crit", () => {
     const c = cacheWith({ a: 12.1, b: 13.5 }); // diff 1.4 >= crit 1 -> red
     assert.strictEqual(

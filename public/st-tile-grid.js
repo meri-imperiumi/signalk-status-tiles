@@ -43,9 +43,13 @@ class StTileGrid extends HTMLElement {
       }
       .tile {
         position: relative;
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
+        display: grid;
+        grid-template-rows: auto 1fr auto auto;
+        grid-template-areas:
+          "label"
+          "value"
+          "reason"
+          "footer";
         padding: 2.2vh 1.8vw;
         overflow: hidden;
         background: #0a0f16;
@@ -63,8 +67,7 @@ class StTileGrid extends HTMLElement {
           inset 0 0 0 1px hsl(var(--hue) 70% 35% / 0.35),
           0 0 3vh hsl(var(--hue) 80% 40% / 0.18);
       }
-      .tile.lit .label,
-      .tile.lit .value { color: hsl(var(--hue) 85% 70%); }
+      .tile.lit .label { color: hsl(var(--hue) 85% 70%); }
       .tile.neutral {
         border-style: dashed;
         border-color: #2a3645;
@@ -83,6 +86,7 @@ class StTileGrid extends HTMLElement {
         50% { box-shadow: inset 0 0 0 1px hsl(var(--hue) 80% 55% / 0.6), 0 0 5vh hsl(var(--hue) 90% 55% / 0.45); }
       }
       .label {
+        grid-area: label;
         font-size: 2.6vh;
         font-weight: 600;
         letter-spacing: 0.08em;
@@ -90,18 +94,23 @@ class StTileGrid extends HTMLElement {
         color: #9fb0c2;
       }
       .value {
+        grid-area: value;
+        align-self: center;
+        justify-self: center;
         font-size: 6.5vh;
         font-weight: 700;
         line-height: 1;
         font-variant-numeric: tabular-nums;
-        color: #d8e2ee;
+        color: #9fb0c2;
       }
       .reason {
+        grid-area: reason;
         font-size: 1.8vh;
         letter-spacing: 0.04em;
         color: #7c8a9b;
       }
       .footer {
+        grid-area: footer;
         display: flex;
         flex-wrap: wrap;
         gap: 0.4vh 1.2vw;
