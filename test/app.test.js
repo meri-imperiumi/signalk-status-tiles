@@ -345,7 +345,7 @@ test("same-hash delta does not reload", async () => {
 });
 
 test("REST returns no hash: first delta becomes baseline, a later change reloads", async () => {
-  // Some server setups serve /config without a configHash (older
+  // Some server setups serve /configuration without a configHash (older
   // handler, stale closure). The stream delta is the source of truth
   // there: the first delta we see must NOT reload (it describes the
   // config we already booted with), but a subsequent differing delta

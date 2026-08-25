@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import pluginFactory, { configHash, PLUGIN_ID } from "../index.js";
+import pluginFactory, { CONFIG_PATH, configHash, PLUGIN_ID } from "../index.js";
 import { CONFIG_HASH_PATH } from "../public/lib/config-hash.js";
 
 /** Minimal but realistic config (validation outcome isn't under test). */
@@ -31,32 +31,29 @@ const SAMPLE = {
   ],
 };
 
-/** Fake ServerAPI: records handleMessage calls, swallows logging. */
+/** Fake ServerAPI: records handleMessage calls, swallows logging,
+ * and captures the app-mounted config endpoint registered via app.get. */
 function fakeApp({ withHandleMessage = true } = {}) {
   /** @type {Array<{id: string, msg: object}>} */
   const messages = [];
   /** @type {string[]} */
   const debugLogs = [];
+  /** @type {Map<string, Function>} handlers registered via app.get */
+  const getHandlers = new Map();
   return {
     messages,
     debugLogs,
+    getHandlers,
     setPluginStatus: () => {},
     warn: () => {},
     error: () => {},
     debug: (s) => debugLogs.push(s),
+    // The config endpoint is mounted on the app (not the plugin
+    // router) so anonymous/read-only clients can reach it.
+    get: (path, handler) => getHandlers.set(path, handler),
     ...(withHandleMessage
       ? { handleMessage: (id, msg) => messages.push({ id, msg }) }
       : {}),
-  };
-}
-
-/** Captures route handlers the way registerWithRouter registers them. */
-function captureRouter() {
-  /** @type {Map<string, Function>} */
-  const handlers = new Map();
-  return {
-    handlers,
-    get: (path, handler) => handlers.set(path, handler),
   };
 }
 
@@ -136,14 +133,12 @@ test("start tolerates servers without handleMessage", () => {
   assert.doesNotThrow(() => plugin.start(SAMPLE));
 });
 
-test("/config serves the config with its hash", () => {
+test("/configuration serves the config with its hash", () => {
   const app = fakeApp();
   const plugin = pluginFactory(app);
   plugin.start(SAMPLE);
-  const router = captureRouter();
-  plugin.registerWithRouter(router);
 
-  const res = call(router.handlers.get("/config"));
+  const res = call(app.getHandlers.get(CONFIG_PATH));
   assert.equal(res.statusCode, 200);
   assert.deepEqual(res.body.config, SAMPLE);
   assert.equal(res.body.configHash, configHash(SAMPLE));
@@ -152,11 +147,15 @@ test("/config serves the config with its hash", () => {
   assert.equal(res.headers["cache-control"], "no-store");
 });
 
-test("/config answers 503 when the plugin is not started", () => {
-  const plugin = pluginFactory(fakeApp());
-  const router = captureRouter();
-  plugin.registerWithRouter(router);
+test("/configuration answers 503 when the plugin is not started", () => {
+  // The endpoint is registered during start(); without start() the
+  // handler isn't mounted, so simulate a started-but-stopped plugin
+  // by mounting then calling with cleared config state.
+  const app = fakeApp();
+  const plugin = pluginFactory(app);
+  plugin.start(SAMPLE);
+  plugin.stop();
 
-  const res = call(router.handlers.get("/config"));
+  const res = call(app.getHandlers.get(CONFIG_PATH));
   assert.equal(res.statusCode, 503);
 });

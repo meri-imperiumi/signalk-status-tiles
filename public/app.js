@@ -21,7 +21,7 @@ import { fetchVesselName } from "./lib/vessel.js";
 import { SignalKStream } from "./st-stream.js";
 import "./st-tile-grid.js";
 
-const API_BASE = "/plugins/signalk-status-tiles";
+const API_BASE = "/signalk/v2/api/status-tiles";
 const EVAL_INTERVAL_MS = 1000; // timer-driven staleness discovery tick
 /** Config-fetch retries: a plugin restart answers 503 for a moment. */
 const CONFIG_RETRIES = 4;
@@ -123,7 +123,7 @@ class StApp extends HTMLElement {
         if (hash) dbg("delta configHash=", hash, "current=", this.configHash);
         if (hash && hash !== this.configHash) {
           if (this.configHash === null) {
-            // First hash we've seen (REST /config didn't give us one —
+            // First hash we've seen (REST /configuration didn't give us one —
             // see fetchPluginConfig). Adopt it as the baseline instead
             // of reloading: this delta describes the config the page
             // already booted with, not a change.
@@ -324,7 +324,7 @@ async function fetchPluginConfig() {
   for (let attempt = 0; attempt <= CONFIG_RETRIES; attempt++) {
     if (attempt > 0) await sleep(CONFIG_RETRY_MS);
     try {
-      const res = await fetch(`${API_BASE}/config`);
+      const res = await fetch(`${API_BASE}/configuration`);
       if (res.ok) {
         const body = await res.json();
         if (body && typeof body === "object" && "configHash" in body) {

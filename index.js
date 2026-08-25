@@ -21,6 +21,16 @@ import { buildSchema } from "./public/lib/schema.js";
 
 const PLUGIN_ID = "signalk-status-tiles";
 
+/** Public REST path the config is served at. Mounted on the app (not the
+ * plugin router) so anonymous and read-only clients — a helm display
+ * hitting the page without logging in — can load it. Routes registered
+ * through `registerWithRouter` are admin-only and the reserved `/config`
+ * path can't be downgraded; an app-mounted route under the public
+ * `/signalk/v2/api/` namespace is the established Signal K pattern for a
+ * plugin-provided read endpoint (see @meri-imperiumi/signalk-infodisplay).
+ */
+const CONFIG_PATH = "/signalk/v2/api/status-tiles/configuration";
+
 /**
  * Stable hash of the config contents (sha256 over the canonical
  * serialization). Used as a change token: the webapp compares it
@@ -83,6 +93,15 @@ export default function (app) {
       pluginConfig = config || {};
       pluginConfigHash = configHash(pluginConfig);
       app.debug?.(`[status-tiles] start() configHash=${pluginConfigHash}`);
+      // Public config endpoint. Mounted on the app (not the plugin
+      // router) so anonymous/read-only clients can load it; see
+      // CONFIG_PATH. Registered in start() so the route is live only
+      // while the plugin is running.
+      registerConfigEndpoint(
+        app,
+        () => pluginConfig,
+        () => pluginConfigHash,
+      );
       // Signal config changes to connected webapps. Server-side edits
       // restart the plugin (stop + start), so start() is exactly the
       // moment a new config becomes visible: publish its hash as a
@@ -105,34 +124,33 @@ export default function (app) {
       pluginConfigHash = null;
       setStatus?.("Stopped");
     },
-
-    /**
-     * Serves the current config to the webapp, plus the candidate-path
-     * patterns for the coverage layer (SPEC §10). The webapp fetches this
-     * on load to build its subscription set and evaluation engine.
-     * `configHash` is the same change token published as a delta on
-     * start, so the webapp has a baseline to compare against.
-     *
-     * @param {object} router - Express router mounted at /plugins/<id>
-     */
-    registerWithRouter(router) {
-      router.get("/config", (_req, res) => {
-        if (!pluginConfig) {
-          res.status(503).json({ message: "Plugin not started" });
-          return;
-        }
-        // Never cache: a config edit restarts the plugin and the
-        // configHash changes, but the URL stays the same. A browser
-        // that serves a stale cached 200 would hand back the OLD hash,
-        // which equals the webapp's current hash => the reload becomes
-        // a no-op and the new config never applies.
-        res.set("Cache-Control", "no-store");
-        res.json({ config: pluginConfig, configHash: pluginConfigHash });
-      });
-    },
   };
 
   return plugin;
 }
 
-export { buildSchema, PLUGIN_ID, validateConfig };
+/**
+ * Mounts the public config endpoint on the app. A bare `app.get` under
+ * `/signalk/v2/api/` is the Signal K convention for a plugin-provided
+ * read endpoint reachable by anonymous clients; the plugin router would
+ * gate the same path behind admin auth (and the reserved `/config` path
+ * can't be downgraded at all).
+ */
+function registerConfigEndpoint(app, getConfig, getConfigHash) {
+  app.get(CONFIG_PATH, (_req, res) => {
+    const config = getConfig();
+    if (!config) {
+      res.status(503).json({ message: "Plugin not started" });
+      return;
+    }
+    // Never cache: a config edit restarts the plugin and the
+    // configHash changes, but the URL stays the same. A browser
+    // that serves a stale cached 200 would hand back the OLD hash,
+    // which equals the webapp's current hash => the reload becomes
+    // a no-op and the new config never applies.
+    res.set("Cache-Control", "no-store");
+    res.json({ config, configHash: getConfigHash() });
+  });
+}
+
+export { buildSchema, CONFIG_PATH, PLUGIN_ID, validateConfig };
