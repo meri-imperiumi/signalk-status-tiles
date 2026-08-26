@@ -1,7 +1,11 @@
 /**
  * Full-viewport tile grid renderer (SPEC §11). Expanse-style HUD aesthetic:
  * dark bridge, high-contrast emissive panels, angular corner brackets,
- * condensed labels. Neutral is visually distinct from green — rendered
+ * condensed labels. The state palette is Grafana's dark-theme set — full
+ * colors rather than a shared HSL hue ramp — because the display this
+ * runs on (a dim nav-station screen) washes out subtle saturation
+ * differences; these are the colors already proven readable there.
+ * Neutral is visually distinct from green — rendered
  * as a dimmed outline panel rather than a lit color, so "no judgment
  * possible" never reads as "fine" (SPEC §11).
  *
@@ -12,15 +16,28 @@
  *
  * @file st-tile-grid.js */
 
-const STATE_HUE = {
-  green: 130, // emissive green
-  amber: 38, // warm amber
-  red: 0, // alert red
+export const STATE_COLOR = {
+  // Grafana dark-theme state colors, chosen for a dim nav-station
+  // display: high lightness and saturation survive a washed-out screen.
+  green: "#73bf69", // Grafana success green
+  amber: "#ffaa00", // Grafana warning yellow
+  red: "#f2495c", // Grafana critical red
   // SPEC §2.1/§11: opportunity is its own branch, not a rung on the
-  // green→amber→red ramp. A cyan/teal hue reads as "different in kind"
+  // green→amber→red ramp. Grafana's cyan reads as "different in kind"
   // rather than a milder amber or bonus green.
-  opportunity: 190,
+  opportunity: "#6ed0e0",
 };
+
+/**
+ * "#73bf69" → "115, 191, 105" — the r/g/b triple for
+ * rgba(var(--c-rgb), α) derivations in CSS. Comma form so it works in
+ * any browser that supports custom properties at all.
+ * @param {string} hex
+ */
+export function colorTriple(hex) {
+  const n = Number.parseInt(hex.slice(1), 16);
+  return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
+}
 
 class StTileGrid extends HTMLElement {
   constructor() {
@@ -103,15 +120,15 @@ class StTileGrid extends HTMLElement {
       .link .dot {
         width: 1.1vh;
         height: 1.1vh;
-        background: #37c26a;
-        box-shadow: 0 0 1vh #37c26a;
+        background: #73bf69;
+        box-shadow: 0 0 1vh #73bf69;
       }
       .link.lost {
         color: #ff8a7a;
       }
       .link.lost .dot {
-        background: #ff5a5a;
-        box-shadow: 0 0 1.2vh #ff5a5a;
+        background: #f2495c;
+        box-shadow: 0 0 1.2vh #f2495c;
         animation: linkpulse 1.1s ease-in-out infinite;
       }
       @keyframes linkpulse {
@@ -146,10 +163,10 @@ class StTileGrid extends HTMLElement {
         padding: 2.2vh 1.8vw;
         overflow: hidden;
         background: #0a0f16;
-        border: 1px solid #1c2733;
+        border: 2px solid #1c2733;
         clip-path: polygon(
-          0 0, calc(100% - 2vh) 0, 100% 2vh, 100% 100%,
-          2vh 100%, 0 calc(100% - 2vh)
+          0 0, calc(100% - 2.4vh) 0, 100% 2.4vh, 100% 100%,
+          2.4vh 100%, 0 calc(100% - 2.4vh)
         );
         transition: background 0.2s, box-shadow 0.2s, border-color 0.2s;
       }
@@ -160,13 +177,13 @@ class StTileGrid extends HTMLElement {
          shortenReason, which trims most paths to their tail). */
       .tile > * { min-width: 0; }
       .tile.lit {
-        border-color: hsl(var(--hue) 70% 45%);
-        background: hsl(var(--hue) 55% 10%);
+        border-color: var(--c, #6cb7f2);
+        background: rgba(var(--c-rgb, 108, 183, 242), 0.15);
         box-shadow:
-          inset 0 0 0 1px hsl(var(--hue) 70% 35% / 0.35),
-          0 0 3vh hsl(var(--hue) 80% 40% / 0.18);
+          inset 0 0 0 1px rgba(var(--c-rgb, 108, 183, 242), 0.4),
+          0 0 3.6vh rgba(var(--c-rgb, 108, 183, 242), 0.3);
       }
-      .tile.lit .label { color: hsl(var(--hue) 85% 70%); }
+      .tile.lit .label { color: var(--c, #6cb7f2); }
       .tile.neutral {
         border-style: dashed;
         border-color: #2a3645;
@@ -181,13 +198,13 @@ class StTileGrid extends HTMLElement {
         animation: pulse 1.6s ease-in-out infinite;
       }
       @keyframes pulse {
-        0%, 100% { box-shadow: inset 0 0 0 1px hsl(var(--hue) 70% 40% / 0.4), 0 0 2.5vh hsl(var(--hue) 85% 45% / 0.25); }
-        50% { box-shadow: inset 0 0 0 1px hsl(var(--hue) 80% 55% / 0.6), 0 0 5vh hsl(var(--hue) 90% 55% / 0.45); }
+        0%, 100% { box-shadow: inset 0 0 0 2px rgba(var(--c-rgb, 242, 73, 92), 0.5), 0 0 3vh rgba(var(--c-rgb, 242, 73, 92), 0.32); }
+        50% { box-shadow: inset 0 0 0 2px rgba(var(--c-rgb, 242, 73, 92), 0.75), 0 0 6vh rgba(var(--c-rgb, 242, 73, 92), 0.55); }
       }
       .label {
         grid-area: label;
         font-size: 2.6vh;
-        font-weight: 600;
+        font-weight: 700;
         letter-spacing: 0.08em;
         text-transform: uppercase;
         color: #9fb0c2;
@@ -199,16 +216,19 @@ class StTileGrid extends HTMLElement {
         align-self: center;
         justify-self: center;
         font-size: 6.5vh;
-        font-weight: 700;
+        font-weight: 800;
         line-height: 1;
         font-variant-numeric: tabular-nums;
-        color: #9fb0c2;
+        /* Plain white regardless of state: the number is data, not a
+           judgment — the border, brackets, and label carry the state
+           color, and white keeps max contrast on the dim display. */
+        color: #ffffff;
       }
       .reason {
         grid-area: reason;
         font-size: 1.8vh;
         letter-spacing: 0.04em;
-        color: #7c8a9b;
+        color: #a5b7cb;
         text-align: center;
         overflow-wrap: anywhere;
       }
@@ -223,7 +243,7 @@ class StTileGrid extends HTMLElement {
       }
       .footer-item { display: inline-flex; gap: 0.5vw; min-width: 0; overflow-wrap: anywhere; }
       .footer-label { color: #5b6b7d; }
-      .footer-value { color: #9fb0c2; font-variant-numeric: tabular-nums; }
+      .footer-value { color: #ffffff; font-variant-numeric: tabular-nums; }
       .tile.neutral .footer { opacity: 0.7; }
       /* Overflow slots (SPEC §10/§11.1): reserved cells appended after
          the claimed tiles. Always present at a fixed count so the grid
@@ -245,9 +265,9 @@ class StTileGrid extends HTMLElement {
       }
       .bracket {
         position: absolute;
-        width: 2.2vh;
-        height: 2.2vh;
-        border: 2px solid hsl(var(--hue, 210) 60% 50% / 0.5);
+        width: 2.8vh;
+        height: 2.8vh;
+        border: 3px solid rgba(var(--c-rgb, 108, 183, 242), 0.85);
       }
       .bracket.tl { top: 0.6vh; left: 0.6vw; border-right: 0; border-bottom: 0; }
       .bracket.tr { top: 0.6vh; right: 0.6vw; border-left: 0; border-bottom: 0; }
@@ -255,7 +275,7 @@ class StTileGrid extends HTMLElement {
       .bracket.br { bottom: 0.6vh; right: 0.6vw; border-left: 0; border-top: 0; }
       .tile.neutral .bracket { border-color: #33414f; opacity: 0.5; }
       .error {
-        color: #ff5a5a;
+        color: #f2495c;
         padding: 3vh;
         font-family: monospace;
         letter-spacing: 0.04em;
@@ -393,8 +413,11 @@ class StTileGrid extends HTMLElement {
       // opportunity is a lit, noticed state but never an alarm/pulse
       // (SPEC §2.1: it ranks below amber/red for urgency).
       tile.className = `tile ${t.state === "neutral" ? "neutral" : "lit"} ${isAlarm ? "alarm" : ""}`;
-      if (STATE_HUE[t.state] != null)
-        tile.style.setProperty("--hue", STATE_HUE[t.state]);
+      const color = STATE_COLOR[t.state];
+      if (color != null) {
+        tile.style.setProperty("--c", color);
+        tile.style.setProperty("--c-rgb", colorTriple(color));
+      }
 
       for (const pos of ["tl", "tr", "bl", "br"]) {
         const b = document.createElement("span");
@@ -466,14 +489,17 @@ class StTileGrid extends HTMLElement {
     const slots = this.gridEl.querySelectorAll(".tile.slot");
     slots.forEach((slot, i) => {
       slot.className = "tile slot";
-      slot.style.removeProperty("--hue");
+      slot.style.removeProperty("--c");
+      slot.style.removeProperty("--c-rgb");
       slot.style.outline = "";
       slot.replaceChildren();
       const c = list?.[i];
       if (!c) return;
       slot.className = "tile slot lit alarm";
-      slot.style.setProperty("--hue", STATE_HUE[c.state] ?? 0);
-      slot.style.outline = "2px dashed hsl(0 70% 55%)";
+      const color = STATE_COLOR[c.state] ?? STATE_COLOR.red;
+      slot.style.setProperty("--c", color);
+      slot.style.setProperty("--c-rgb", colorTriple(color));
+      slot.style.outline = `2px dashed ${color}`;
       slot.style.outlineOffset = "-0.6vh";
       const label = document.createElement("div");
       label.className = "label";
