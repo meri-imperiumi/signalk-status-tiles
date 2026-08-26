@@ -166,7 +166,7 @@ test("subscribes to every config-referenced path", (t) => {
     sub.subscribe,
     collectPaths(SAMPLE).map((path) => ({
       path,
-      policy: "fixed",
+      policy: "instant",
       minPeriod: 1000,
     })),
   );

@@ -100,7 +100,7 @@ class SignalKStream {
           context: "vessels.self",
           subscribe: this.paths.map((path) => ({
             path,
-            policy: "fixed",
+            policy: "instant",
             minPeriod: 1000,
           })),
         };

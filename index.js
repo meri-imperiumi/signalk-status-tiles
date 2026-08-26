@@ -185,7 +185,7 @@ export default function (app) {
         context: "vessels.self",
         subscribe: paths.map((path) => ({
           path,
-          policy: "fixed",
+          policy: "instant",
           minPeriod: 1000,
         })),
       },
