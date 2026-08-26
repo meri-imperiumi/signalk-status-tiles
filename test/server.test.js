@@ -32,18 +32,29 @@ const SAMPLE = {
 };
 
 /** Fake ServerAPI: records handleMessage calls, swallows logging,
- * and captures the app-mounted config endpoint registered via app.get. */
+ * and captures the app-mounted config endpoint registered via app.get.
+ * subscriptionmanager is a minimal stand-in that records subscriptions
+ * and lets tests push deltas through the plugin's callback. */
 function fakeApp({ withHandleMessage = true } = {}) {
   /** @type {Array<{id: string, msg: object}>} */
   const messages = [];
   /** @type {string[]} */
   const debugLogs = [];
+  /** @type {Array<object>} */
+  const subscriptions = [];
+  /** @type {Function|null} delta callback captured from the plugin */
+  let deltaCallback = null;
   /** @type {Map<string, Function>} handlers registered via app.get */
   const getHandlers = new Map();
   return {
     messages,
     debugLogs,
     getHandlers,
+    subscriptions,
+    /** Feeds a delta through the plugin's subscription callback. */
+    feed(delta) {
+      deltaCallback?.(delta);
+    },
     setPluginStatus: () => {},
     warn: () => {},
     error: () => {},
@@ -51,10 +62,30 @@ function fakeApp({ withHandleMessage = true } = {}) {
     // The config endpoint is mounted on the app (not the plugin
     // router) so anonymous/read-only clients can reach it.
     get: (path, handler) => getHandlers.set(path, handler),
+    subscriptionmanager: {
+      subscribe(subscription, unsubscribes, _onError, onDelta) {
+        subscriptions.push(subscription);
+        unsubscribes.push(() => {});
+        deltaCallback = onDelta;
+      },
+    },
     ...(withHandleMessage
       ? { handleMessage: (id, msg) => messages.push({ id, msg }) }
       : {}),
   };
+}
+
+/** All config-hash values published so far, in order. */
+function hashValues(app) {
+  const out = [];
+  for (const { msg } of app.messages) {
+    for (const u of msg?.updates || []) {
+      for (const v of u?.values || []) {
+        if (v?.path === CONFIG_HASH_PATH) out.push(v.value);
+      }
+    }
+  }
+  return out;
 }
 
 /** Minimal express-like res. */
@@ -96,14 +127,16 @@ test("start publishes the config hash as a delta on the stream", () => {
   const plugin = pluginFactory(app);
   plugin.start(SAMPLE);
 
-  assert.equal(app.messages.length, 1);
-  const { id, msg } = app.messages[0];
-  assert.equal(id, PLUGIN_ID);
-  assert.equal(msg.context, "vessels.self");
-  assert.equal(msg.updates.length, 1);
-  const value = msg.updates[0].values[0];
-  assert.equal(value.path, CONFIG_HASH_PATH);
-  assert.equal(value.value, configHash(SAMPLE));
+  // Exactly one hash publication, among the other deltas (metadata,
+  // tile statuses) start() now emits.
+  assert.deepEqual(hashValues(app), [configHash(SAMPLE)]);
+  const hashMsg = app.messages.find(({ msg }) =>
+    (msg?.updates || []).some((u) =>
+      (u?.values || []).some((v) => v?.path === CONFIG_HASH_PATH),
+    ),
+  );
+  assert.equal(hashMsg.id, PLUGIN_ID);
+  assert.equal(hashMsg.msg.context, "vessels.self");
   // start() logs the hash it booted with (server-side debug trail for
   // tracing config-reload problems).
   assert.ok(
@@ -120,11 +153,7 @@ test("a restart with changed config publishes a new hash", () => {
   changed.contexts[0].predicate.value = 8;
   plugin.start(changed);
 
-  assert.equal(app.messages.length, 2);
-  const [first, second] = app.messages.map((m) => m.msg.updates[0].values[0]);
-  assert.equal(first.value, configHash(SAMPLE));
-  assert.equal(second.value, configHash(changed));
-  assert.notEqual(first.value, second.value);
+  assert.deepEqual(hashValues(app), [configHash(SAMPLE), configHash(changed)]);
 });
 
 test("start tolerates servers without handleMessage", () => {

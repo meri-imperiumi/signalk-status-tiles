@@ -16,6 +16,14 @@ import { DEFAULT_STALE_MS, PathCache } from "./staleness.js";
 import { evalTile } from "./tile.js";
 
 /**
+ * @typedef {object} Engine
+ * @property {import("./staleness.js").PathCache} cache - shared path cache
+ * @property {Map<string, object>} contexts - id → context object
+ * @property {(delta: object) => Set<string>} onDelta - feed a raw delta into the cache, returns changed paths
+ * @property {(now?: number) => void} evaluate - re-evaluate all tiles + coverage, call onEval
+ */
+
+/**
  * Creates an engine bound to a config. Re-create on config reload.
  *
  * @param {object} config - `{ contexts, tiles, coverage, staleMs }`
@@ -26,6 +34,7 @@ import { evalTile } from "./tile.js";
  * @param {import("./anomaly-log.js").AnomalyLog} [options.anomalyLog] - durable log for
  *   coverage anomalies (SPEC §10); every detected anomaly is recorded,
  *   surfaced or not. Absent => no logging.
+ * @returns {Engine}
  */
 export function createEngine(config, onEval, options = {}) {
   const cfg = unwrapConfig(config);
