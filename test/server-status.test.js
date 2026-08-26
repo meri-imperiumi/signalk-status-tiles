@@ -164,7 +164,11 @@ test("subscribes to every config-referenced path", (t) => {
   assert.equal(sub.context, "vessels.self");
   assert.deepEqual(
     sub.subscribe,
-    collectPaths(SAMPLE).map((path) => ({ path })),
+    collectPaths(SAMPLE).map((path) => ({
+      path,
+      policy: "fixed",
+      minPeriod: 1000,
+    })),
   );
 });
 

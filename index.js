@@ -181,7 +181,14 @@ export default function (app) {
     const paths = collectPaths(pluginConfig);
     if (!app.subscriptionmanager || paths.length === 0) return;
     app.subscriptionmanager.subscribe(
-      { context: "vessels.self", subscribe: paths.map((path) => ({ path })) },
+      {
+        context: "vessels.self",
+        subscribe: paths.map((path) => ({
+          path,
+          policy: "fixed",
+          minPeriod: 1000,
+        })),
+      },
       unsubscribes,
       (subscriptionError) => {
         app.error(`Subscription error: ${subscriptionError}`);

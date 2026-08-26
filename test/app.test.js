@@ -198,6 +198,10 @@ async function flush(microtasks = 5) {
 function subscribePaths(socket) {
   assert.ok(socket.sent.length > 0, "subscribe sent");
   const msg = JSON.parse(socket.sent[0]);
+  for (const entry of msg.subscribe) {
+    assert.equal(entry.policy, "fixed", "rate-limited policy");
+    assert.equal(entry.minPeriod, 1000, "at most once per second");
+  }
   return msg.subscribe.map((s) => s.path);
 }
 

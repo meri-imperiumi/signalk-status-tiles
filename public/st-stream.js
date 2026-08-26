@@ -98,7 +98,11 @@ class SignalKStream {
       if (this.paths.length > 0) {
         const msg = {
           context: "vessels.self",
-          subscribe: this.paths.map((p) => ({ path: p })),
+          subscribe: this.paths.map((path) => ({
+            path,
+            policy: "fixed",
+            minPeriod: 1000,
+          })),
         };
         socket.send(JSON.stringify(msg));
       } else {
