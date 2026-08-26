@@ -321,6 +321,24 @@ class StTileGrid extends HTMLElement {
     this.linkEl = link;
     /** @type {number|null} */
     this.clockTimer = null;
+    /**
+     * Persistent tile elements keyed by tile id, reused across
+     * evaluations (SPEC §11.1: layout is layout-time-only). The engine
+     * re-evaluates every second + on every delta; rebuilding the whole
+     * grid each tick leaks DOM in a long-running kiosk (detached nodes,
+     * animation frames, shadow-DOM bookkeeping outpacing GC). Instead we
+     * build each tile's element tree once and update the volatile bits
+     * (state class, value, reason, footer) in place.
+     * @type {Map<string, HTMLElement>}
+     */
+    this.tileEls = new Map();
+    /**
+     * Persistent overflow-slot elements (SPEC §10): created once at the
+     * configured count, only their occupants change. Reusing the same
+     * elements keeps `set coverage` from allocating per tick too.
+     * @type {HTMLElement[]}
+     */
+    this.slotEls = [];
     this.updateClock();
   }
 
@@ -406,76 +424,165 @@ class StTileGrid extends HTMLElement {
   }
 
   set tiles(list) {
-    this.gridEl.innerHTML = "";
-    for (const t of list || []) {
-      const tile = document.createElement("div");
-      const isAlarm = t.state === "amber" || t.state === "red";
-      // opportunity is a lit, noticed state but never an alarm/pulse
-      // (SPEC §2.1: it ranks below amber/red for urgency).
-      tile.className = `tile ${t.state === "neutral" ? "neutral" : "lit"} ${isAlarm ? "alarm" : ""}`;
-      const color = STATE_COLOR[t.state];
-      if (color != null) {
-        tile.style.setProperty("--c", color);
-        tile.style.setProperty("--c-rgb", colorTriple(color));
+    const tiles = list || [];
+    // Reconcile tile elements by id: reuse existing elements (update in
+    // place), create new ones, drop ids no longer present (e.g. a
+    // context toggled a tile out of the output). Order in the grid
+    // follows the incoming list so context-driven reordering is honored.
+    const seen = new Set();
+    /** @type {HTMLElement|null} */
+    let cursor = this.gridEl.firstChild;
+    for (const t of tiles) {
+      let tile = this.tileEls.get(t.id);
+      if (tile) {
+        this.#paintTile(tile, t);
+      } else {
+        tile = this.#buildTile(t);
+        this.tileEls.set(t.id, tile);
       }
-
-      for (const pos of ["tl", "tr", "bl", "br"]) {
-        const b = document.createElement("span");
-        b.className = `bracket ${pos}`;
-        tile.append(b);
-      }
-
-      const label = document.createElement("div");
-      label.className = "label";
-      label.textContent = t.label;
-      tile.append(label);
-
-      if (t.displayValue != null) {
-        const v = document.createElement("div");
-        v.className = "value";
-        v.textContent = String(t.displayValue);
-        tile.append(v);
-      }
-      if (t.reason && t.state !== "green") {
-        const r = document.createElement("div");
-        r.className = "reason";
-        r.textContent = shortenReason(t.reason).toUpperCase();
-        tile.append(r);
-      }
-      if (Array.isArray(t.footer) && t.footer.length > 0) {
-        const f = document.createElement("div");
-        f.className = "footer";
-        for (const e of t.footer) {
-          const span = document.createElement("span");
-          span.className = "footer-item";
-          const lab = document.createElement("span");
-          lab.className = "footer-label";
-          lab.textContent = e.label;
-          const val = document.createElement("span");
-          val.className = "footer-value";
-          val.textContent = e.value;
-          span.append(lab, val);
-          f.append(span);
-        }
-        tile.append(f);
-      }
-      this.gridEl.append(tile);
+      seen.add(t.id);
+      // Move the tile to the current position (no-op if already there).
+      if (cursor !== tile) this.gridEl.insertBefore(tile, cursor);
+      cursor = tile.nextSibling;
+    }
+    // Drop tiles whose id disappeared from the output (a context went
+    // inactive). Detach but keep them cached? No — a context can toggle
+    // for hours; holding detached element trees is the very leak we're
+    // fixing. Discard them; a re-appearance rebuilds cheaply (one tile).
+    for (const [id, el] of this.tileEls) {
+      if (seen.has(id)) continue;
+      el.remove();
+      this.tileEls.delete(id);
     }
     // Reserved overflow slots, always rendered (SPEC §10): empty cells
     // when no anomaly is showing, filled by `set coverage` below.
-    for (let i = 0; i < (this._slotCount ?? 0); i++) {
+    // Persistent: grow/shrink the pool to the configured count without
+    // rebuilding the existing slots.
+    const want = this._slotCount ?? 0;
+    while (this.slotEls.length < want) {
       const s = document.createElement("div");
       s.className = "tile slot";
-      this.gridEl.append(s);
+      this.slotEls.push(s);
+    }
+    while (this.slotEls.length > want) this.slotEls.pop().remove();
+    // Append any slot elements not yet in the grid after the last tile.
+    for (const s of this.slotEls) {
+      if (s.parentElement !== this.gridEl) this.gridEl.append(s);
     }
     // Column-wise flow: choose a row count that keeps columns wide
     // (~18vw) and the grid roughly balanced. Aim for 3 rows; use more
     // rows only when tiles would otherwise overflow into too many thin
     // columns. Total cells = tiles + reserved slots.
-    const total = (list?.length ?? 0) + (this._slotCount ?? 0);
+    const total = tiles.length + (this._slotCount ?? 0);
     let rows = 3;
     if (total <= 3) rows = total || 1;
     this.gridEl.style.setProperty("--grid-rows", String(rows));
+  }
+
+  /**
+   * Builds the static skeleton of a tile element: the four corner
+   * brackets and the label/value/reason/footer containers. State and
+   * volatile content are filled in by #paintTile on every evaluation.
+   * @param {object} t
+   * @returns {HTMLElement}
+   */
+  #buildTile(t) {
+    const tile = document.createElement("div");
+    for (const pos of ["tl", "tr", "bl", "br"]) {
+      const b = document.createElement("span");
+      b.className = `bracket ${pos}`;
+      tile.append(b);
+    }
+    const label = document.createElement("div");
+    label.className = "label";
+    tile.append(label);
+    const value = document.createElement("div");
+    value.className = "value";
+    tile.append(value);
+    const reason = document.createElement("div");
+    reason.className = "reason";
+    tile.append(reason);
+    const footer = document.createElement("div");
+    footer.className = "footer";
+    tile.append(footer);
+    this.#paintTile(tile, t);
+    return tile;
+  }
+
+  /**
+   * Updates a tile element's volatile state in place: class (state +
+   * alarm), state color CSS vars, label, value, reason, footer. Nothing
+   * here creates or removes elements except footer items (which mirror
+   * the config-derived footer array). The skeleton from #buildTile is
+   * reused across every evaluation.
+   * @param {HTMLElement} tile
+   * @param {object} t
+   */
+  #paintTile(tile, t) {
+    const isAlarm = t.state === "amber" || t.state === "red";
+    // opportunity is a lit, noticed state but never an alarm/pulse
+    // (SPEC §2.1: it ranks below amber/red for urgency).
+    tile.className = `tile ${t.state === "neutral" ? "neutral" : "lit"} ${isAlarm ? "alarm" : ""}`;
+    const color = STATE_COLOR[t.state];
+    if (color != null) {
+      tile.style.setProperty("--c", color);
+      tile.style.setProperty("--c-rgb", colorTriple(color));
+    }
+    const children = tile.children;
+    // Children order (from #buildTile): 4 brackets, then label, value,
+    // reason, footer.
+    const label = children[4];
+    const value = children[5];
+    const reason = children[6];
+    const footer = children[7];
+    // label is config-derived (rarely changes), but cheap to set.
+    if (label.textContent !== t.label) label.textContent = t.label;
+    const dv = t.displayValue != null ? String(t.displayValue) : "";
+    if (value.textContent !== dv) value.textContent = dv;
+    value.style.display = dv ? "" : "none";
+    const reasonText =
+      t.reason && t.state !== "green"
+        ? shortenReason(t.reason).toUpperCase()
+        : "";
+    if (reason.textContent !== reasonText) reason.textContent = reasonText;
+    reason.style.display = reasonText ? "" : "none";
+    // Footer items mirror the config-derived footer array; rebuild only
+    // when the entry count changes, otherwise update values in place.
+    const items = Array.isArray(t.footer) ? t.footer : [];
+    this.#paintFooter(footer, items);
+  }
+
+  /**
+   * Updates a footer container's items in place: reuses existing
+   * item elements when the count matches, rebuilds when it grows or
+   * shrinks. Footer entries are config-derived so the count is stable
+   * across ticks in practice; values update every tick.
+   * @param {HTMLElement} footer
+   * @param {Array<{label: string, value: string}>} items
+   */
+  #paintFooter(footer, items) {
+    if (footer.children.length !== items.length) {
+      footer.replaceChildren();
+      for (const e of items) {
+        const span = document.createElement("span");
+        span.className = "footer-item";
+        const lab = document.createElement("span");
+        lab.className = "footer-label";
+        lab.textContent = e.label;
+        const val = document.createElement("span");
+        val.className = "footer-value";
+        val.textContent = e.value;
+        span.append(lab, val);
+        footer.append(span);
+      }
+      return;
+    }
+    for (let i = 0; i < items.length; i++) {
+      const span = footer.children[i];
+      const [lab, val] = span.children;
+      if (lab.textContent !== items[i].label) lab.textContent = items[i].label;
+      if (val.textContent !== items[i].value) val.textContent = items[i].value;
+    }
   }
 
   /**
@@ -486,29 +593,41 @@ class StTileGrid extends HTMLElement {
    * @param {Array<{path: string, state: string, zone: string}>} list
    */
   set coverage(list) {
-    const slots = this.gridEl.querySelectorAll(".tile.slot");
-    slots.forEach((slot, i) => {
-      slot.className = "tile slot";
-      slot.style.removeProperty("--c");
-      slot.style.removeProperty("--c-rgb");
-      slot.style.outline = "";
-      slot.replaceChildren();
+    // Reuse the persistent slot elements (built by `set tiles`); only
+    // their occupants change, never the cells themselves (SPEC §10/§11.1).
+    for (let i = 0; i < this.slotEls.length; i++) {
+      const slot = this.slotEls[i];
       const c = list?.[i];
-      if (!c) return;
+      if (!c) {
+        slot.className = "tile slot";
+        slot.style.removeProperty("--c");
+        slot.style.removeProperty("--c-rgb");
+        slot.style.outline = "";
+        slot.replaceChildren();
+        continue;
+      }
       slot.className = "tile slot lit alarm";
       const color = STATE_COLOR[c.state] ?? STATE_COLOR.red;
       slot.style.setProperty("--c", color);
       slot.style.setProperty("--c-rgb", colorTriple(color));
       slot.style.outline = `2px dashed ${color}`;
       slot.style.outlineOffset = "-0.6vh";
-      const label = document.createElement("div");
-      label.className = "label";
-      label.textContent = shortPath(c.path);
-      const r = document.createElement("div");
-      r.className = "reason";
-      r.textContent = `${c.zone.toUpperCase()} ANOMALY`;
-      slot.append(label, r);
-    });
+      // Two children: label + reason. Build once per occupancy, update in
+      // place afterwards (the slot persists across ticks).
+      let [label, reason] = slot.children;
+      if (!label || !reason) {
+        slot.replaceChildren();
+        label = document.createElement("div");
+        label.className = "label";
+        reason = document.createElement("div");
+        reason.className = "reason";
+        slot.append(label, reason);
+      }
+      const labelText = shortPath(c.path);
+      if (label.textContent !== labelText) label.textContent = labelText;
+      const reasonText = `${c.zone.toUpperCase()} ANOMALY`;
+      if (reason.textContent !== reasonText) reason.textContent = reasonText;
+    }
   }
 }
 

@@ -23,7 +23,10 @@ class FakeShadowRoot {
 
 class FakeElement {
   constructor(_tag) {
+    /** @type {FakeElement[]} */
     this.children = [];
+    /** @type {FakeElement|null} */
+    this.parentNode = null;
     this.style = {
       setProperty: () => {},
       removeProperty: () => {},
@@ -41,16 +44,49 @@ class FakeElement {
   /** Mimic the browser: clearing innerHTML drops the children. */
   set innerHTML(v) {
     this._innerHTML = v;
-    if (v === "") this.children = [];
+    if (v === "") {
+      for (const c of this.children) c.parentNode = null;
+      this.children = [];
+    }
   }
   get innerHTML() {
     return this._innerHTML;
   }
   append(...els) {
-    this.children.push(...els);
+    for (const el of els) {
+      el.parentNode = this;
+      this.children.push(el);
+    }
   }
   replaceChildren(...els) {
-    this.children = els;
+    for (const c of this.children) c.parentNode = null;
+    this.children = [];
+    this.append(...els);
+  }
+  insertBefore(el, ref) {
+    el.parentNode = this;
+    if (ref == null) {
+      this.children.push(el);
+      return el;
+    }
+    const i = this.children.indexOf(ref);
+    if (i === -1) this.children.push(el);
+    else this.children.splice(i, 0, el);
+    return el;
+  }
+  remove() {
+    if (this.parentNode == null) return;
+    const i = this.parentNode.children.indexOf(this);
+    if (i !== -1) this.parentNode.children.splice(i, 1);
+    this.parentNode = null;
+  }
+  get firstChild() {
+    return this.children[0] ?? null;
+  }
+  get nextSibling() {
+    if (this.parentNode == null) return null;
+    const i = this.parentNode.children.indexOf(this);
+    return this.parentNode.children[i + 1] ?? null;
   }
   querySelectorAll() {
     return [];
