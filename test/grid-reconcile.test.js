@@ -161,12 +161,13 @@ test("value/reason updates happen in place without rebuilding", () => {
   const g = newGrid();
   g.tiles = [tile("a", "green", { displayValue: "12" })];
   const tileEl = g.gridEl.children[0];
-  // children: 4 brackets + label + value + reason + footer
-  const valueEl = tileEl.children[5];
+  // children: label + value + reason + footer (corner brackets are
+  // CSS pseudo-elements, not DOM)
+  const valueEl = tileEl.children[1];
   assert.equal(valueEl.textContent, "12");
 
   g.tiles = [tile("a", "green", { displayValue: "99" })];
-  const valueElAfter = g.gridEl.children[0].children[5];
+  const valueElAfter = g.gridEl.children[0].children[1];
   assert.equal(valueElAfter.textContent, "99", "value updated in place");
   assert.equal(
     g.gridEl.children[0],

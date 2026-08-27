@@ -18,24 +18,20 @@ globalThis.document = {
   createElement: () => ({ classList: { add: () => {} } }),
 };
 
-const { shortenReason, lastSegment, shortPath, STATE_COLOR, colorTriple } =
-  await import("../public/st-tile-grid.js");
+const { shortenReason, lastSegment, shortPath, STATE_THEME } = await import(
+  "../public/st-tile-grid.js"
+);
 
-test("state palette: every lit state has a full Grafana-style hex color", () => {
-  assert.deepEqual(Object.keys(STATE_COLOR).sort(), [
-    "amber",
-    "green",
-    "opportunity",
-    "red",
-  ]);
-  for (const color of Object.values(STATE_COLOR)) {
-    assert.match(color, /^#[0-9a-f]{6}$/i);
-  }
-});
-
-test("colorTriple renders a hex color as an r, g, b CSS var value", () => {
-  assert.equal(colorTriple("#73bf69"), "115, 191, 105");
-  assert.equal(colorTriple("#ffaa00"), "255, 170, 0");
+test("state theme mapping: every lit state resolves to a spec theme class", () => {
+  // amber rides the spec's orange ramp position, opportunity its own
+  // teal branch (SPEC §2.1); neutral is deliberately unmapped (it is
+  // rendered un-lit, not themed).
+  assert.deepEqual(STATE_THEME, {
+    green: "green",
+    amber: "orange",
+    red: "red",
+    opportunity: "teal",
+  });
 });
 
 test("lastSegment returns the final dot-segment", () => {

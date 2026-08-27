@@ -1,43 +1,47 @@
 /**
- * Full-viewport tile grid renderer (SPEC §11). Expanse-style HUD aesthetic:
- * dark bridge, high-contrast emissive panels, angular corner brackets,
- * condensed labels. The state palette is Grafana's dark-theme set — full
- * colors rather than a shared HSL hue ramp — because the display this
- * runs on (a dim nav-station screen) washes out subtle saturation
- * differences; these are the colors already proven readable there.
- * Neutral is visually distinct from green — rendered
- * as a dimmed outline panel rather than a lit color, so "no judgment
- * possible" never reads as "fine" (SPEC §11).
+ * Full-viewport tile grid renderer (SPEC §11), styled per the Signal K
+ * plugin UI spec: strictly flat panels (border-radius 0, no shadows, no
+ * gradients), 2px corner brackets, monospace telemetry with tabular
+ * numerals, and a day/night-reactive palette. Colors live as custom
+ * properties on <html> (index.html) keyed by data-mode="day"|"night",
+ * which app.js sets from the environment.mode delta (lib/mode.js) —
+ * they pierce the shadow DOM, so a mode switch re-skins the whole grid
+ * with zero DOM work.
  *
- * Packing is deterministic and layout-time-only (SPEC §11.1): recomputed
- * only on config/screen change, never on a state change. This first cut
- * uses a CSS grid sized in viewport units; richer multi-size packing
- * arrives later.
+ * Divergences from the spec, all for the same reason — the primary
+ * consumer is a somewhat dim kiosk screen that washes out subtle
+ * styling, and the screen has read as "a little too dim" even before
+ * this spec:
+ *   - base is pure black (--bg-base #000000; spec says #080a0c)
+ *   - lit panel borders run at ~0.65 alpha (spec suggests "faint",
+ *     ~0.3) and the state tint at 0.16 (spec: "ultra-faint"), so the
+ *     state survives glare at glance distance
+ *   - neutral tiles use a solid grey border + muted text instead of
+ *     whole-tile opacity dimming — on a washed-out screen opacity only
+ *     makes things illegible, and grey-vs-lit-color already reads as
+ *     "no judgment possible" (SPEC §2/§11)
+ *   - only red tiles pulse; amber stays steady lit (SPEC §2 severity
+ *     semantics — motion is reserved for "look at this now")
+ *
+ * Packing is deterministic and layout-time-only (SPEC §11.1):
+ * recomputed only on config/screen change, never on a state change.
  *
  * @file st-tile-grid.js */
 
-export const STATE_COLOR = {
-  // Grafana dark-theme state colors, chosen for a dim nav-station
-  // display: high lightness and saturation survive a washed-out screen.
-  green: "#73bf69", // Grafana success green
-  amber: "#ffaa00", // Grafana warning yellow
-  red: "#f2495c", // Grafana critical red
-  // SPEC §2.1/§11: opportunity is its own branch, not a rung on the
-  // green→amber→red ramp. Grafana's cyan reads as "different in kind"
-  // rather than a milder amber or bonus green.
-  opportunity: "#6ed0e0",
-};
-
 /**
- * "#73bf69" → "115, 191, 105" — the r/g/b triple for
- * rgba(var(--c-rgb), α) derivations in CSS. Comma form so it works in
- * any browser that supports custom properties at all.
- * @param {string} hex
+ * Tile state → spec theme class (signalk-visuals.md §5). The class
+ * assigns the local --c/--c-rgb pair from the day/night palette
+ * variables, so JS never handles colors and a mode switch re-skins the
+ * grid for free. `amber` maps to the spec's orange ramp position,
+ * `opportunity` to teal — its own branch outside the problem ramp
+ * (SPEC §2.1), never a milder amber or bonus green.
  */
-export function colorTriple(hex) {
-  const n = Number.parseInt(hex.slice(1), 16);
-  return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
-}
+export const STATE_THEME = {
+  green: "green",
+  amber: "orange",
+  red: "red",
+  opportunity: "teal",
+};
 
 class StTileGrid extends HTMLElement {
   constructor() {
@@ -49,16 +53,23 @@ class StTileGrid extends HTMLElement {
         display: flex;
         flex-direction: column;
         height: 100%;
-        background: #05070a;
-        color: #d8e2ee;
-        font-family: "Eurostile", "Bank Gothic", "Oswald", system-ui, sans-serif;
-        --tile-radius: clamp(0.8vw, 1vw, 1.4vh);
+        background: var(--bg-base, #000000);
+        color: var(--text-main, #ffffff);
+        font-family: system-ui, -apple-system, sans-serif;
       }
+      /* Spec theme classes: each assigns a local --c/--c-rgb consumed
+         by borders, tints, labels, and brackets below. Fallbacks are
+         the bright day palette so the grid is self-contained (and
+         never dim) even when embedded without index.html's vars. */
+      .theme-green { --c: var(--color-green, #8dfcbb); --c-rgb: var(--color-green-rgb, 141, 252, 187); }
+      .theme-orange { --c: var(--color-orange, #fca847); --c-rgb: var(--color-orange-rgb, 252, 168, 71); }
+      .theme-red { --c: var(--color-red, #ff5e5e); --c-rgb: var(--color-red-rgb, 255, 94, 94); }
+      .theme-teal { --c: var(--color-teal, #66c6db); --c-rgb: var(--color-teal-rgb, 102, 198, 219); }
       /* Chrome band (SPEC §11.1): constant-height top strip holding
          vessel identity, active contexts, and the link indicator — plus
          the clock on the right. Always present and fixed-height, so the
          tile grid below never re-flows when its contents change. Its
-         content is subordinate chrome (SPEC §11.2): small, low-contrast,
+         content is subordinate chrome (SPEC §11.2): small, muted,
          never competing with tiles for a glance. */
       .chrome {
         display: flex;
@@ -68,10 +79,10 @@ class StTileGrid extends HTMLElement {
         flex: 0 0 auto;
         height: 4.6vh;
         padding: 0 2vw;
-        border-bottom: 1px solid #141d28;
-        background: #070b11;
+        border-bottom: 1px solid rgba(var(--color-grey-rgb, 102, 102, 102), 0.45);
+        background: var(--bg-panel-muted, #0a0c0c);
         font-size: 1.9vh;
-        letter-spacing: 0.14em;
+        letter-spacing: 0.12em;
         text-transform: uppercase;
         white-space: nowrap;
         overflow: hidden;
@@ -86,49 +97,46 @@ class StTileGrid extends HTMLElement {
       }
       .vessel {
         font-weight: 700;
-        color: #c7d6e6;
+        color: var(--text-main, #ffffff);
         letter-spacing: 0.22em;
       }
       .vessel:empty::after {
         content: "—";
-        color: #44535f;
+        color: var(--color-grey, #666666);
       }
       /* Active contexts: the boat's current situation ("anchored",
          "underway"…) — exactly what contexts express (SPEC §3.1).
-         Dimmed chips so several can coexist without noise. */
+         Muted chips so several can coexist without noise. */
       .ctx {
         padding: 0.25vh 0.9vw;
-        border: 1px solid #2a3a4c;
-        border-radius: 0;
-        clip-path: polygon(0.6vw 0, 100% 0, calc(100% - 0.6vw) 100%, 0 100%);
-        color: #8fa5ba;
+        border: 1px solid rgba(var(--color-grey-rgb, 102, 102, 102), 0.55);
+        color: var(--text-muted, #a0a0b5);
         font-size: 1.6vh;
         letter-spacing: 0.18em;
       }
       /* Connectivity indicator: dot + word. Steady green "live" while
          the Signal K stream is open; red pulse while connecting or
          reconnecting so a drop is visible instantly (SPEC §2/§4) rather
-         than waiting for staleness to degrade tiles. */
+         than waiting for staleness to degrade tiles. Flat square dot —
+         no glow shadow, per the strictly-flat geometry rule. */
       .link {
         display: inline-flex;
         align-items: center;
         gap: 0.6vw;
-        color: #74879b;
+        color: var(--text-muted, #a0a0b5);
         font-size: 1.6vh;
         letter-spacing: 0.18em;
       }
       .link .dot {
         width: 1.1vh;
         height: 1.1vh;
-        background: #73bf69;
-        box-shadow: 0 0 1vh #73bf69;
+        background: var(--color-green, #8dfcbb);
       }
       .link.lost {
-        color: #ff8a7a;
+        color: var(--color-red, #ff5e5e);
       }
       .link.lost .dot {
-        background: #f2495c;
-        box-shadow: 0 0 1.2vh #f2495c;
+        background: var(--color-red, #ff5e5e);
         animation: linkpulse 1.1s ease-in-out infinite;
       }
       @keyframes linkpulse {
@@ -136,7 +144,8 @@ class StTileGrid extends HTMLElement {
         50% { opacity: 0.25; }
       }
       .clock {
-        color: #9fb0c2;
+        color: var(--text-main, #ffffff);
+        font-family: ui-monospace, "Fira Code", monospace;
         font-variant-numeric: tabular-nums;
         letter-spacing: 0.12em;
         font-weight: 600;
@@ -162,13 +171,41 @@ class StTileGrid extends HTMLElement {
           "footer";
         padding: 2.2vh 1.8vw;
         overflow: hidden;
-        background: #0a0f16;
-        border: 2px solid #1c2733;
-        clip-path: polygon(
-          0 0, calc(100% - 2.4vh) 0, 100% 2.4vh, 100% 100%,
-          2.4vh 100%, 0 calc(100% - 2.4vh)
-        );
-        transition: background 0.2s, box-shadow 0.2s, border-color 0.2s;
+        background: var(--bg-panel, #111414);
+        border: 2px solid rgba(var(--color-grey-rgb, 102, 102, 102), 0.35);
+        transition: background 0.2s, border-color 0.2s;
+      }
+      /* Corner brackets (spec §5): 2px, via pseudo-elements on the
+         tile's top-left and bottom-right corners. Lit tiles get them
+         in the theme color; neutral/slot tiles in dimmed grey. The
+         inset is 0.6vh on BOTH axes — vh and vw must not be mixed
+         here, or the horizontal margin grows on widescreen displays
+         and the brackets read as misaligned. */
+      .tile::before,
+      .tile::after {
+        content: "";
+        position: absolute;
+        width: 2.8vh;
+        height: 2.8vh;
+        pointer-events: none;
+      }
+      .tile::before {
+        top: 0.6vh;
+        left: 0.6vh;
+        border-top: 2px solid var(--c, var(--color-grey, #666666));
+        border-left: 2px solid var(--c, var(--color-grey, #666666));
+      }
+      .tile::after {
+        bottom: 0.6vh;
+        right: 0.6vh;
+        border-bottom: 2px solid var(--c, var(--color-grey, #666666));
+        border-right: 2px solid var(--c, var(--color-grey, #666666));
+      }
+      .tile.neutral::before,
+      .tile.neutral::after,
+      .tile.slot:not(.lit)::before,
+      .tile.slot:not(.lit)::after {
+        border-color: rgba(var(--color-grey-rgb, 102, 102, 102), 0.5);
       }
       /* Grid items default to min-width:auto, so an unbreakable child
          (a long dotted path) blows the track wider than the tile and
@@ -176,38 +213,53 @@ class StTileGrid extends HTMLElement {
          and let long tokens wrap (belt-and-suspenders alongside
          shortenReason, which trims most paths to their tail). */
       .tile > * { min-width: 0; }
+      /* DIVERGENCE from spec ("faint" ~0.3-alpha borders,
+         "ultra-faint" tint): the dim kiosk screen washes those out at
+         glance distance, so lit borders run at 0.65 and the tint at
+         0.16 of the theme color. Night mode dims automatically — the
+         palette vars shift, these alphas don't. */
       .tile.lit {
-        border-color: var(--c, #6cb7f2);
-        background: rgba(var(--c-rgb, 108, 183, 242), 0.15);
-        box-shadow:
-          inset 0 0 0 1px rgba(var(--c-rgb, 108, 183, 242), 0.4),
-          0 0 3.6vh rgba(var(--c-rgb, 108, 183, 242), 0.3);
+        border-color: rgba(var(--c-rgb), 0.65);
+        background: rgba(var(--c-rgb), 0.16);
       }
-      .tile.lit .label { color: var(--c, #6cb7f2); }
+      /* Neutral: "no judgment possible" — deliberately un-lit. Solid
+         grey border + muted text like the other boxes (dashed read as
+         "broken/reserved" rather than "not applicable"); grey-vs-lit-
+         color plus the muted content is what separates it from green
+         (SPEC §11.2). */
       .tile.neutral {
-        border-style: dashed;
-        border-color: #2a3645;
-        background: #070a0e;
-        box-shadow: none;
-        opacity: 0.5;
+        border-color: rgba(var(--color-grey-rgb, 102, 102, 102), 0.5);
+        background: var(--bg-panel-muted, #0a0c0c);
       }
-      .tile.neutral .label { color: #5b6b7d; }
-      .tile.neutral .value { color: #44535f; }
-      .tile.neutral .reason { color: #6b7a8c; opacity: 1; }
+      .tile.neutral .label { color: var(--color-grey, #666666); }
+      .tile.neutral .value { color: var(--text-muted, #a0a0b5); }
+      .tile.neutral .reason { color: var(--text-muted, #a0a0b5); }
+      /* Only red pulses — "look at this NOW" (SPEC §2). Amber stays
+         steady lit: it wants a glance today, and a blinking tile for
+         every amber would train the eye to ignore motion on the kiosk
+         (the same trust-erosion argument as ignoring reds). Strictly
+         flat animation: border-color and tint between two alphas, no
+         glow shadow (spec §5). */
       .tile.alarm {
         animation: pulse 1.6s ease-in-out infinite;
       }
       @keyframes pulse {
-        0%, 100% { box-shadow: inset 0 0 0 2px rgba(var(--c-rgb, 242, 73, 92), 0.5), 0 0 3vh rgba(var(--c-rgb, 242, 73, 92), 0.32); }
-        50% { box-shadow: inset 0 0 0 2px rgba(var(--c-rgb, 242, 73, 92), 0.75), 0 0 6vh rgba(var(--c-rgb, 242, 73, 92), 0.55); }
+        0%, 100% {
+          border-color: rgba(var(--c-rgb), 0.55);
+          background: rgba(var(--c-rgb), 0.12);
+        }
+        50% {
+          border-color: rgba(var(--c-rgb), 1);
+          background: rgba(var(--c-rgb), 0.3);
+        }
       }
       .label {
         grid-area: label;
         font-size: 2.6vh;
         font-weight: 700;
-        letter-spacing: 0.08em;
+        letter-spacing: 0.1em;
         text-transform: uppercase;
-        color: #9fb0c2;
+        color: var(--c, var(--text-muted, #a0a0b5));
         text-align: center;
         overflow-wrap: anywhere;
       }
@@ -218,17 +270,19 @@ class StTileGrid extends HTMLElement {
         font-size: 6.5vh;
         font-weight: 800;
         line-height: 1;
+        font-family: ui-monospace, "Fira Code", monospace;
         font-variant-numeric: tabular-nums;
-        /* Plain white regardless of state: the number is data, not a
-           judgment — the border, brackets, and label carry the state
-           color, and white keeps max contrast on the dim display. */
-        color: #ffffff;
+        /* Plain --text-main (pure white by day) regardless of state:
+           the number is data, not a judgment — the border, brackets,
+           and label carry the state color, and white keeps max contrast
+           on the dim display. */
+        color: var(--text-main, #ffffff);
       }
       .reason {
         grid-area: reason;
         font-size: 1.8vh;
         letter-spacing: 0.04em;
-        color: #a5b7cb;
+        color: var(--text-muted, #a0a0b5);
         text-align: center;
         overflow-wrap: anywhere;
       }
@@ -238,12 +292,29 @@ class StTileGrid extends HTMLElement {
         flex-wrap: wrap;
         gap: 0.4vh 1.2vw;
         margin-top: 0.4vh;
-        font-size: 1.6vh;
         letter-spacing: 0.04em;
       }
-      .footer-item { display: inline-flex; gap: 0.5vw; min-width: 0; overflow-wrap: anywhere; }
-      .footer-label { color: #5b6b7d; }
-      .footer-value { color: #ffffff; font-variant-numeric: tabular-nums; }
+      .footer-item {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 0.5vw;
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+      /* Reviewer note: footer values bumped from 1.6vh to 2.2vh —
+         they carry real telemetry (watts, temperatures) and were too
+         small to read on the kiosk screen. Labels stay a step smaller
+         and muted so the numbers dominate. */
+      .footer-label {
+        color: var(--text-muted, #a0a0b5);
+        font-size: 1.7vh;
+      }
+      .footer-value {
+        color: var(--text-main, #ffffff);
+        font-family: ui-monospace, "Fira Code", monospace;
+        font-variant-numeric: tabular-nums;
+        font-size: 2.2vh;
+      }
       .tile.neutral .footer { opacity: 0.7; }
       /* Overflow slots (SPEC §10/§11.1): reserved cells appended after
          the claimed tiles. Always present at a fixed count so the grid
@@ -252,32 +323,24 @@ class StTileGrid extends HTMLElement {
          than neutral tiles: they carry no judgment at all. */
       .tile.slot {
         border-style: dashed;
-        border-color: #131c26;
-        background: #05080d;
-        box-shadow: none;
-        opacity: 0.25;
+        border-color: rgba(var(--color-grey-rgb, 102, 102, 102), 0.3);
+        background: var(--bg-panel-muted, #0a0c0c);
+        opacity: 0.35;
       }
       .tile.slot.lit {
         /* Occupied: a surfaced unclaimed anomaly — problem-colored,
            pulsing like any alarm, with a dashed outline marking it as a
            temporary overflow occupant rather than a configured tile. */
         opacity: 1;
+        border-color: rgba(var(--c-rgb), 0.65);
+        background: rgba(var(--c-rgb), 0.16);
+        outline: 2px dashed var(--c);
+        outline-offset: -0.6vh;
       }
-      .bracket {
-        position: absolute;
-        width: 2.8vh;
-        height: 2.8vh;
-        border: 3px solid rgba(var(--c-rgb, 108, 183, 242), 0.85);
-      }
-      .bracket.tl { top: 0.6vh; left: 0.6vw; border-right: 0; border-bottom: 0; }
-      .bracket.tr { top: 0.6vh; right: 0.6vw; border-left: 0; border-bottom: 0; }
-      .bracket.bl { bottom: 0.6vh; left: 0.6vw; border-right: 0; border-top: 0; }
-      .bracket.br { bottom: 0.6vh; right: 0.6vw; border-left: 0; border-top: 0; }
-      .tile.neutral .bracket { border-color: #33414f; opacity: 0.5; }
       .error {
-        color: #f2495c;
+        color: var(--color-red, #ff5e5e);
         padding: 3vh;
-        font-family: monospace;
+        font-family: ui-monospace, "Fira Code", monospace;
         letter-spacing: 0.04em;
       }
     `;
@@ -356,21 +419,18 @@ class StTileGrid extends HTMLElement {
     this.clockTimer = null;
   }
 
-  /** Formats the local date/time into the chrome's clock element. */
+  /**
+   * Formats the local date/time into the chrome's clock element.
+   * Spec time rules: local ship time carries no timezone suffix, dates
+   * as YYYY-MM-DD. Monospace tabular numerals keep the seconds tick
+   * from jiggling the layout.
+   */
   updateClock() {
     const d = new Date();
-    const date = d.toLocaleDateString(undefined, {
-      year: "numeric",
-      month: "short",
-      day: "2-digit",
-    });
-    const time = d.toLocaleTimeString(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    });
-    this.clockEl.textContent = `${date} ${time}`;
+    const p = (n) => String(n).padStart(2, "0");
+    this.clockEl.textContent =
+      `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+      `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
   }
 
   /** Vessel name from the `name` path (set by the app on each eval). */
@@ -480,19 +540,15 @@ class StTileGrid extends HTMLElement {
   }
 
   /**
-   * Builds the static skeleton of a tile element: the four corner
-   * brackets and the label/value/reason/footer containers. State and
-   * volatile content are filled in by #paintTile on every evaluation.
+   * Builds the static skeleton of a tile element: label, value, reason,
+   * footer containers. State and volatile content are filled in by
+   * #paintTile on every evaluation. The 2px corner brackets are CSS
+   * pseudo-elements (spec §5), not elements — no DOM cost per tile.
    * @param {object} t
    * @returns {HTMLElement}
    */
   #buildTile(t) {
     const tile = document.createElement("div");
-    for (const pos of ["tl", "tr", "bl", "br"]) {
-      const b = document.createElement("span");
-      b.className = `bracket ${pos}`;
-      tile.append(b);
-    }
     const label = document.createElement("div");
     label.className = "label";
     tile.append(label);
@@ -510,31 +566,33 @@ class StTileGrid extends HTMLElement {
   }
 
   /**
-   * Updates a tile element's volatile state in place: class (state +
-   * alarm), state color CSS vars, label, value, reason, footer. Nothing
-   * here creates or removes elements except footer items (which mirror
-   * the config-derived footer array). The skeleton from #buildTile is
-   * reused across every evaluation.
+   * Updates a tile element's volatile state in place: state class
+   * (theme + lit + alarm), label, value, reason, footer. Nothing here
+   * creates or removes elements except footer items (which mirror the
+   * config-derived footer array). The skeleton from #buildTile is
+   * reused across every evaluation. Colors are set by the theme class
+   * (STATE_THEME) resolving the day/night palette vars — never inline
+   * styles, so a mode switch needs zero repainting here.
    * @param {HTMLElement} tile
    * @param {object} t
    */
   #paintTile(tile, t) {
-    const isAlarm = t.state === "amber" || t.state === "red";
+    const isAlarm = t.state === "red";
     // opportunity is a lit, noticed state but never an alarm/pulse
-    // (SPEC §2.1: it ranks below amber/red for urgency).
-    tile.className = `tile ${t.state === "neutral" ? "neutral" : "lit"} ${isAlarm ? "alarm" : ""}`;
-    const color = STATE_COLOR[t.state];
-    if (color != null) {
-      tile.style.setProperty("--c", color);
-      tile.style.setProperty("--c-rgb", colorTriple(color));
-    }
+    // (SPEC §2.1: it ranks below amber/red for urgency), and amber
+    // pulses neither — only red, "look at this now", earns motion.
+    // An unmapped state (shouldn't happen) renders as neutral rather
+    // than as an uncolored lit tile.
+    const theme = STATE_THEME[t.state];
+    tile.className =
+      `tile ${theme ? `theme-${theme} lit` : "neutral"}` +
+      `${isAlarm ? " alarm" : ""}`;
+    // Children order (from #buildTile): label, value, reason, footer.
     const children = tile.children;
-    // Children order (from #buildTile): 4 brackets, then label, value,
-    // reason, footer.
-    const label = children[4];
-    const value = children[5];
-    const reason = children[6];
-    const footer = children[7];
+    const label = children[0];
+    const value = children[1];
+    const reason = children[2];
+    const footer = children[3];
     // label is config-derived (rarely changes), but cheap to set.
     if (label.textContent !== t.label) label.textContent = t.label;
     const dv = t.displayValue != null ? String(t.displayValue) : "";
@@ -600,18 +658,16 @@ class StTileGrid extends HTMLElement {
       const c = list?.[i];
       if (!c) {
         slot.className = "tile slot";
-        slot.style.removeProperty("--c");
-        slot.style.removeProperty("--c-rgb");
-        slot.style.outline = "";
         slot.replaceChildren();
         continue;
       }
-      slot.className = "tile slot lit alarm";
-      const color = STATE_COLOR[c.state] ?? STATE_COLOR.red;
-      slot.style.setProperty("--c", color);
-      slot.style.setProperty("--c-rgb", colorTriple(color));
-      slot.style.outline = `2px dashed ${color}`;
-      slot.style.outlineOffset = "-0.6vh";
+      // Same theme-class mechanism as ordinary tiles; red is the safe
+      // default for an unknown state on an anomaly. Only a red anomaly
+      // pulses — same steady-amber rule as ordinary tiles.
+      const theme = STATE_THEME[c.state] ?? "red";
+      slot.className = `tile slot theme-${theme} lit${
+        c.state === "red" ? " alarm" : ""
+      }`;
       // Two children: label + reason. Build once per occupancy, update in
       // place afterwards (the slot persists across ticks).
       let [label, reason] = slot.children;
@@ -648,7 +704,7 @@ export function lastSegment(p) {
 
 /**
  * Shortens every Signal-K-path token in a reason string to its last
- * dot-segment, leaving the surrounding words/Operators intact. A
+ * dot-segment, leaving the surrounding words/operators intact. A
  * reason like `...deployment.flinsail.detectedstate ≠ ...recommendedstate`
  * becomes `detectedstate ≠ recommendedstate` — the shared prefix is the
  * same for both sides, so only the differing tail is glanceable. Single

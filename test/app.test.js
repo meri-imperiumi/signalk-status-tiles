@@ -269,6 +269,10 @@ test("initial load: engine built from the REST envelope, hash path subscribed", 
     paths.includes("electrical.batteries.0.capacity.stateOfCharge"),
     "check path subscribed",
   );
+  assert.ok(
+    paths.includes("environment.mode"),
+    "day/night mode path subscribed",
+  );
   // The reliable reload backstop: a poll timer is running.
   assert.ok(el.pollTimer != null, "config poll scheduled");
   // On-connect verification: same hash => no extra swap.

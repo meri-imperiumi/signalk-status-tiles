@@ -16,6 +16,12 @@
 import { AnomalyLog } from "./lib/anomaly-log.js";
 import { CONFIG_HASH_PATH, configHashFromDelta } from "./lib/config-hash.js";
 import { createEngine } from "./lib/engine.js";
+import {
+  applyMode,
+  ENVIRONMENT_MODE_PATH,
+  fetchEnvironmentMode,
+  modeFromDelta,
+} from "./lib/mode.js";
 import { collectPaths, unwrapConfig } from "./lib/paths.js";
 import { fetchVesselName } from "./lib/vessel.js";
 import { SignalKStream } from "./st-stream.js";
@@ -98,6 +104,16 @@ class StApp extends HTMLElement {
       if (name) this.gridEl.vessel = name;
     });
 
+    // Day/night mode drives the palette via data-mode on <html>. Like
+    // the name, environment.mode is typically set long before we
+    // subscribe, so the initial value comes from REST; the delta
+    // subscription covers live changes (e.g. an automatic day/night
+    // switch). The served HTML defaults to "day" — the kiosk must
+    // never boot dim.
+    fetchEnvironmentMode().then((mode) => {
+      if (mode) applyMode(mode);
+    });
+
     // Reserved overflow slots are layout-time config (SPEC §10/§11.1):
     // set once, before the first evaluation renders the grid — and
     // again on a config reload.
@@ -138,6 +154,13 @@ class StApp extends HTMLElement {
             window.location.reload();
           }
         }
+        // Theme mode changes ride the same deltas: applying data-mode
+        // to <html> re-skins every tile through CSS variables — no
+        // per-tile repainting, no layout work. Independent of the
+        // engine: the theme must follow mode even if evaluation is
+        // erroring.
+        const mode = modeFromDelta(delta);
+        if (mode) applyMode(mode);
         if (!this.engine) return;
         try {
           this.engine.onDelta(delta);
@@ -209,7 +232,12 @@ class StApp extends HTMLElement {
    */
   #watchedPaths() {
     return [
-      ...new Set([...collectPaths(this.config), "name", CONFIG_HASH_PATH]),
+      ...new Set([
+        ...collectPaths(this.config),
+        "name",
+        CONFIG_HASH_PATH,
+        ENVIRONMENT_MODE_PATH,
+      ]),
     ];
   }
 

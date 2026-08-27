@@ -1,34 +1,65 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-mode="day">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
     <title>Status Tiles</title>
     <style>
+      /* Signal K plugin UI spec theme: dark base in both modes — no
+         white mode, ever. Day mode shifts intensity UP (brighter, more
+         saturated semantic colors) to fight glare; night mode dims them
+         to protect rhodopsin. app.js applies data-mode to <html> from
+         the environment.mode delta (public/lib/mode.js); the custom
+         properties pierce the web components' shadow DOM. */
       :root {
-        color-scheme: light dark;
-        --green: #2e7d32;
-        --amber: #f57c00;
-        --red: #c62828;
-        --neutral: #616161;
-        --bg: #fff;
-        --fg: #1a1a1a;
-        --muted: #888;
+        color-scheme: dark;
+        /* DIVERGENCE from spec (#080a0c): pure black base. This app's
+           primary consumer is a somewhat dim kiosk screen — black
+           maximizes contrast for the lit tiles, and darker-than-spec
+           panels make the colored state the brightest thing on screen. */
+        --bg-base: #000000;
+        --bg-panel: #111414;
+        --bg-panel-muted: #0a0c0c;
       }
-      @media (prefers-color-scheme: dark) {
-        :root {
-          --bg: #101010;
-          --fg: #eee;
-          --muted: #777;
-        }
+      /* DIVERGENCE from spec: the un-set :root selector repeats the day
+         palette, so a page without a data-mode attribute (or an unknown
+         value) still renders bright. The kiosk must never boot dim
+         while waiting for the first environment.mode value. */
+      :root,
+      :root[data-mode="day"] {
+        --color-green: #8dfcbb;
+        --color-green-rgb: 141, 252, 187;
+        --color-teal: #66c6db;
+        --color-teal-rgb: 102, 198, 219;
+        --color-orange: #fca847;
+        --color-orange-rgb: 252, 168, 71;
+        --color-red: #ff5e5e;
+        --color-red-rgb: 255, 94, 94;
+        --color-grey: #666666;
+        --color-grey-rgb: 102, 102, 102;
+        --text-main: #ffffff;
+        --text-muted: #a0a0b5;
+      }
+      :root[data-mode="night"] {
+        --color-green: #4a7555;
+        --color-green-rgb: 74, 117, 85;
+        --color-teal: #33616b;
+        --color-teal-rgb: 51, 97, 107;
+        --color-orange: #8a5318;
+        --color-orange-rgb: 138, 83, 24;
+        --color-red: #8f3333;
+        --color-red-rgb: 143, 51, 51;
+        --color-grey: #333333;
+        --color-grey-rgb: 51, 51, 51;
+        --text-main: #c4c4c4;
+        --text-muted: #666677;
       }
       * { box-sizing: border-box; }
-      html, body { margin: 0; height: 100%; background: #05070a; }
+      html, body { margin: 0; height: 100%; background: var(--bg-base); }
       body {
         font-family: system-ui, -apple-system, sans-serif;
-        background: #05070a;
-        color: #d8e2ee;
+        color: var(--text-main);
       }
       st-app { display: block; height: 100%; }
     </style>
