@@ -23,6 +23,10 @@
  *   - only red tiles pulse; amber stays steady lit (SPEC §2 severity
  *     semantics — motion is reserved for "look at this now")
  *
+ * Portrait (phone/on-watch) is handled by a CSS orientation media
+ * query: row-wise flow, at most two tiles across, vertical scroll —
+ * see the block after .grid.
+ *
  * Packing is deterministic and layout-time-only (SPEC §11.1):
  * recomputed only on config/screen change, never on a state change.
  *
@@ -159,6 +163,39 @@ class StTileGrid extends HTMLElement {
         flex: 1 1 auto;
         padding: 2vh 2vw;
         box-sizing: border-box;
+      }
+      /* Portrait (phone/on-watch, spec §4): the column-wise flow above
+         puts ceil(total/3) columns side by side — on a phone those are
+         unreadably narrow strips. Instead: row-wise flow, at most two
+         tiles across, scrolling down past the fold. A pure orientation
+         media query — no JS, no resize listeners: this webapp is always
+         full-viewport (SPEC §11), so viewport orientation IS grid
+         orientation, and an orientation change is exactly the
+         layout-invalidating event SPEC §11.1 allows. The chrome band
+         wraps to two lines (its height was fixed to protect the grid
+         from re-flow; in portrait it yields so vessel/context/clock
+         all stay readable). */
+      @media (orientation: portrait) {
+        .chrome {
+          height: auto;
+          min-height: 4.6vh;
+          flex-wrap: wrap;
+          white-space: normal;
+        }
+        .grid {
+          grid-auto-flow: row;
+          grid-template-rows: none;
+          grid-auto-columns: auto;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          grid-auto-rows: minmax(22vh, 1fr);
+          overflow-y: auto;
+        }
+        .value {
+          /* Two-across phone tiles have ~42vw of inner width; 6.5vh
+             monospace digits overflow that on common phones, so the
+             headline number steps down a notch in portrait. */
+          font-size: 5.5vh;
+        }
       }
       .tile {
         position: relative;

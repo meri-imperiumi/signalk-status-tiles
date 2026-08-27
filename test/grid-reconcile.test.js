@@ -193,6 +193,23 @@ test("a tile leaving the output (context off) is dropped; returning rebuilds it"
   assert.equal(g.gridEl.children.length, 3, "2 tiles + 1 slot after return");
 });
 
+test("stylesheet handles portrait: row flow, two columns, scroll", () => {
+  // Phone/on-watch layout (spec §4): portrait must not reuse the
+  // column-wise fill that produces narrow strips. Smoketest on the
+  // constructed stylesheet — the node test DOM can't lay out CSS.
+  const g = newGrid();
+  const style = g.shadowRoot.children[0]; // style is appended first
+  assert.match(style.textContent, /@media \(orientation: portrait\)/);
+  const portrait = style.textContent.split("@media (orientation: portrait)")[1];
+  assert.match(portrait, /grid-auto-flow: row/);
+  assert.match(
+    portrait,
+    /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/,
+  );
+  assert.match(portrait, /overflow-y: auto/);
+  assert.match(portrait, /font-size: 5.5vh/);
+});
+
 test("slot pool is reused across evaluations; occupants update in place", () => {
   const g = newGrid();
   g.tiles = [tile("a")];
