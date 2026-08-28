@@ -314,7 +314,18 @@ class StTileGrid extends HTMLElement {
            and label carry the state color, and white keeps max contrast
            on the dim display. */
         color: var(--text-main, #ffffff);
+        text-align: center;
+        /* Safety net for an unbroken long token; multi-part headlines
+           break at their spaces first. */
+        overflow-wrap: anywhere;
       }
+      /* Composed headlines (displayParts: 'surplus 95%', 'deployed
+         starboard') are longer than a single number — 6.5vh fits ~7
+         monospace chars in a ~16vw tile. Step down by length bucket
+         (valueFit); the longest wrap at word boundaries instead of
+         overflowing the tile. */
+      .value[data-fit="m"] { font-size: 4vh; }
+      .value[data-fit="l"] { font-size: 3.4vh; }
       .reason {
         grid-area: reason;
         font-size: 1.8vh;
@@ -634,6 +645,8 @@ class StTileGrid extends HTMLElement {
     if (label.textContent !== t.label) label.textContent = t.label;
     const dv = t.displayValue != null ? String(t.displayValue) : "";
     if (value.textContent !== dv) value.textContent = dv;
+    const fit = dv ? valueFit(dv) : "s";
+    if (value.dataset.fit !== fit) value.dataset.fit = fit;
     value.style.display = dv ? "" : "none";
     const reasonText =
       t.reason && t.state !== "green"
@@ -728,6 +741,20 @@ class StTileGrid extends HTMLElement {
 export function shortPath(p) {
   const parts = String(p).split(".");
   return parts.slice(-2).join(".");
+}
+
+/**
+ * Font-fit bucket for a headline string (see the .value CSS): tiles are
+ * ~16vw wide, so the default 6.5vh headline fits ~7 monospace chars on
+ * one line. Longer composed headlines step down and eventually wrap.
+ * Buckets: s ≤7 chars (default size), m ≤12, l >12.
+ * @param {string} s
+ * @returns {"s"|"m"|"l"}
+ */
+export function valueFit(s) {
+  const len = String(s).length;
+  if (len <= 7) return "s";
+  return len <= 12 ? "m" : "l";
 }
 
 /**

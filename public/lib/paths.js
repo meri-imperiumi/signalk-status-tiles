@@ -115,6 +115,9 @@ export function collectPaths(config) {
     for (const f of tile?.footer || []) {
       if (f?.path) out.add(f.path);
     }
+    for (const p of tile?.displayParts || []) {
+      if (p?.path) out.add(p.path);
+    }
   }
   // Coverage candidates: explicit include-list/patterns only (SPEC §10).
   // Patterns are not literal paths here; only concrete strings without

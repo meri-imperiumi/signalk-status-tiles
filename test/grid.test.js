@@ -18,9 +18,8 @@ globalThis.document = {
   createElement: () => ({ classList: { add: () => {} } }),
 };
 
-const { shortenReason, lastSegment, shortPath, STATE_THEME } = await import(
-  "../public/st-tile-grid.js"
-);
+const { shortenReason, lastSegment, shortPath, valueFit, STATE_THEME } =
+  await import("../public/st-tile-grid.js");
 
 test("state theme mapping: every lit state resolves to a spec theme class", () => {
   // amber rides the spec's orange ramp position, opportunity its own
@@ -56,6 +55,18 @@ test("shortenReason trims every path token to its last segment", () => {
   const r =
     "electrical.energy.prediction.deployment.flinsail.detectedState ≠ electrical.energy.prediction.deployment.flinsail.recommendedState";
   assert.equal(shortenReason(r), "detectedState ≠ recommendedState");
+});
+
+test("valueFit buckets headline lengths for font sizing", () => {
+  // A single short number keeps the full 6.5vh glanceable size...
+  assert.equal(valueFit("95%"), "s");
+  assert.equal(valueFit("surplus"), "s");
+  // ...composed headlines step down ('surplus 95%')...
+  assert.equal(valueFit("surplus 95%"), "m");
+  assert.equal(valueFit("deficit 45%"), "m");
+  // ...and the longest wrap ('deployed starboard').
+  assert.equal(valueFit("deployed starboard"), "l");
+  assert.equal(valueFit(""), "s");
 });
 
 test("shortenReason leaves non-path text, numbers, and short tokens intact", () => {

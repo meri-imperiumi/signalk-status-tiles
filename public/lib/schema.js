@@ -584,6 +584,28 @@ export function buildSchema() {
                 })),
               },
             },
+            displayParts: {
+              type: "array",
+              title: "Headline parts (optional)",
+              description:
+                "Extra paths appended to the tile's headline value, joined with spaces. E.g. an Energy status check displaying 'surplus' plus a state-of-charge part renders 'surplus 95%'; a deploy state plus a side renders 'deployed starboard'. Each part formats via its displayUnits metadata like a footer entry. A part whose value is NULL is omitted from the headline entirely; a stale part shows '—'. Composes with a designated Display check (its value comes first) or stands alone.",
+              items: {
+                type: "object",
+                properties: {
+                  path: {
+                    type: "string",
+                    title: "Signal K path",
+                  },
+                  unit: {
+                    type: "string",
+                    title: "Display unit (fallback)",
+                    description:
+                      "Only used when the path publishes no usable unit metadata: shown as the value's symbol and enables SI prefixing (e.g. 'Wh' renders 3190 as 3.19 kWh)",
+                  },
+                },
+                required: ["path"],
+              },
+            },
             footer: {
               type: "array",
               title: "Footer readouts (optional)",

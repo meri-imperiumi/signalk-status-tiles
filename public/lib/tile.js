@@ -15,6 +15,7 @@ import { worst } from "./states.js";
 import {
   displayUnitsForPath,
   formatDisplayValue,
+  unwrap,
   valueToNumber,
 } from "./util.js";
 
@@ -33,6 +34,18 @@ import {
  * its formatted value becomes the tile's headline number. A stale check's
  * display value is replaced with an explicit "unknown" marker (dash), not
  * the frozen last reading.
+ *
+ * Composed headlines: a tile may also declare `displayParts` — extra path
+ * readouts appended to the headline, space-joined (e.g. a status check
+ * displaying "surplus" plus a SoC part renders "surplus 95%"; a deploy
+ * state plus a side renders "deployed starboard"). Parts resolve like
+ * footer entries (displayUnits formatting; strings as-is) with one
+ * difference per value state: a part whose value is NULL (never
+ * published, or explicitly cleared) is OMITTED from the headline —
+ * "surplus", not "surplus —" — while a stale-but-present part shows
+ * "—" like any headline input (SPEC §3.4: staleness governs the
+ * display value; null is simply no information to append). Parts
+ * never affect tile state.
  *
  * @param {object} tile - `{ id, label, context?, checks, size? }`
  * @param {import("./staleness.js").PathCache} cache
@@ -108,6 +121,15 @@ export function evalTile(tile, cache, contexts, now = Date.now()) {
 
   const footer = resolveFooter(tile.footer, cache);
 
+  // Composed headline: append resolved parts after the designated display
+  // check's value (either may be absent — the join skips empty segments).
+  const partTexts = resolveDisplayParts(tile.displayParts, cache);
+  if (partTexts.length > 0) {
+    displayValue = [displayValue, ...partTexts]
+      .filter((s) => s != null && s !== "")
+      .join(" ");
+  }
+
   return {
     id: tile.id,
     state,
@@ -140,37 +162,74 @@ function resolveFooter(footer, cache) {
   const out = [];
   for (const f of footer) {
     if (!f?.path) continue;
-    const meta = cache.metaFor(f.path);
-    let value;
-    if (!cache.has(f.path)) {
-      value = "—";
-    } else {
-      const raw = cache.value(f.path);
-      const n = valueToNumber(raw);
-      // Numeric values get display-unit conversion (K→°C, etc.).
-      // Strings/booleans (e.g. state enums like "deployed") are shown as-is.
-      value = Number.isFinite(n)
-        ? formatDisplayValue(
-            n,
-            displayUnitsForPath(f.path, footerUnits(meta, f.unit)),
-          )
-        : String(raw);
-    }
-    out.push({ label: f.label || f.path, value });
+    out.push({ label: f.label || f.path, value: resolvePathText(f, cache) });
   }
   return out;
 }
 
 /**
- * Unit source for footer formatting: published displayUnits metadata
- * first (needs at least one usable field), then the standard `meta.units`
- * field as a bare symbol, then the entry's inline `unit`.
+ * Resolves a single path entry ({path, unit?}) to its display text:
+ * numeric values get display-unit conversion (K→°C, SI prefixing),
+ * strings/booleans (e.g. state enums like "deployed") as-is. An absent
+ * path shows "—". Shared by footer entries and headline parts.
+ *
+ * @param {{path: string, unit?: string}} f
+ * @param {import("./staleness.js").PathCache} cache
+ * @returns {string}
+ */
+function resolvePathText(f, cache) {
+  const meta = cache.metaFor(f.path);
+  if (!cache.has(f.path)) return "—";
+  const raw = cache.value(f.path);
+  const n = valueToNumber(raw);
+  // Numeric values get display-unit conversion (K→°C, etc.).
+  // Strings/booleans (e.g. state enums like "deployed") are shown as-is.
+  return Number.isFinite(n)
+    ? formatDisplayValue(
+        n,
+        displayUnitsForPath(f.path, pathUnits(meta, f.unit)),
+      )
+    : String(raw);
+}
+
+/**
+ * Resolves a tile's displayParts — extra path readouts appended to the
+ * headline (see the file-level doc). A part whose value is NULL/absent
+ * is omitted entirely (no "surplus —" half-headlines); a part that was
+ * present but has gone stale shows "—", never the frozen last reading
+ * (SPEC §3.4).
+ *
+ * @param {Array<{path: string, unit?: string}>} [parts]
+ * @param {import("./staleness.js").PathCache} cache
+ * @returns {string[]} one text per live part, in config order
+ */
+function resolveDisplayParts(parts, cache) {
+  if (!Array.isArray(parts) || parts.length === 0) return [];
+  const out = [];
+  for (const p of parts) {
+    if (!p?.path) continue;
+    // NULL (never published or explicitly cleared): nothing to append.
+    if (unwrap(cache.value(p.path)) == null) continue;
+    if (cache.isStale(p.path)) {
+      out.push("—");
+      continue;
+    }
+    out.push(resolvePathText(p, cache));
+  }
+  return out;
+}
+
+/**
+ * Unit source for path-entry formatting (footer entries and headline
+ * parts): published displayUnits metadata first (needs at least one
+ * usable field), then the standard `meta.units` field as a bare symbol,
+ * then the entry's inline `unit`.
  *
  * @param {object|undefined} meta
  * @param {string} [inlineUnit]
  * @returns {object|undefined}
  */
-function footerUnits(meta, inlineUnit) {
+function pathUnits(meta, inlineUnit) {
   const du = meta?.displayUnits;
   if (du?.formula || du?.symbol || du?.displayFormat) return du;
   if (meta?.units) return { symbol: meta.units };

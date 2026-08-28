@@ -397,6 +397,146 @@ describe("tile aggregation", () => {
     assert.strictEqual(t.footer[1].value, "deployed");
   });
 
+  test("displayParts compose the headline: display-check value first, parts space-joined", () => {
+    // The motivating case: an Energy status word + state of charge ->
+    // "surplus 95%" as one glanceable headline instead of a footer entry.
+    const c = new PathCache();
+    c.set("energy.status", "surplus");
+    c.set("batteries.house.soc", 0.95);
+    c.setMeta("batteries.house.soc", {
+      displayUnits: { formula: "value*100", symbol: "%", displayFormat: "0" },
+    });
+    const t = evalTile(
+      {
+        id: "energy",
+        label: "Energy",
+        checks: [
+          {
+            type: "stateMatch",
+            path: "energy.status",
+            map: [{ value: "surplus", state: "opportunity" }],
+            default: "neutral",
+            display: true,
+          },
+        ],
+        displayParts: [{ path: "batteries.house.soc" }],
+      },
+      c,
+      new Map(),
+    );
+    assert.strictEqual(t.displayValue, "surplus 95%");
+  });
+
+  test("displayParts stand alone without a display check", () => {
+    // Deploy state + side -> "deployed starboard" (strings as-is, no
+    // numeric formatting).
+    const c = new PathCache();
+    c.set("deploy.detected", "deployed");
+    c.set("deploy.side", "starboard");
+    const t = evalTile(
+      {
+        id: "flinsail",
+        label: "FLINsail",
+        checks: [
+          {
+            type: "agreement",
+            path: "deploy.detected",
+            path2: "deploy.recommended",
+          },
+        ],
+        displayParts: [{ path: "deploy.detected" }, { path: "deploy.side" }],
+      },
+      c,
+      new Map(),
+    );
+    assert.strictEqual(t.displayValue, "deployed starboard");
+    // Parts never affect state: the agreement inputs are stale/absent
+    // here, so the tile is neutral regardless of the shown headline.
+    assert.strictEqual(t.state, "neutral");
+  });
+
+  test("NULL/absent displayPart is omitted from the headline entirely", () => {
+    // No "surplus —" half-headlines: a part with no value simply
+    // doesn't append, leaving the display check's value alone.
+    const absent = new PathCache();
+    absent.set("energy.status", "surplus");
+    const cfg = (cache) =>
+      evalTile(
+        {
+          id: "energy",
+          label: "Energy",
+          checks: [
+            {
+              type: "stateMatch",
+              path: "energy.status",
+              map: [{ value: "surplus", state: "opportunity" }],
+              default: "neutral",
+              display: true,
+            },
+          ],
+          displayParts: [{ path: "batteries.house.soc" }],
+        },
+        cache,
+        new Map(),
+      );
+    assert.strictEqual(cfg(absent).displayValue, "surplus");
+    // An explicitly-published null (Signal K clear) is the same as
+    // absent: omitted, not rendered as the string "null".
+    const nulled = new PathCache();
+    nulled.set("energy.status", "surplus");
+    nulled.set("batteries.house.soc", null);
+    assert.strictEqual(cfg(nulled).displayValue, "surplus");
+  });
+
+  test("stale displayPart shows dash, not the frozen reading (SPEC §3.4)", () => {
+    const c = new PathCache();
+    c.set("energy.status", "surplus");
+    c.set("batteries.house.soc", 0.95, Date.now() - 120000); // stale
+    const t = evalTile(
+      {
+        id: "energy",
+        label: "Energy",
+        checks: [
+          {
+            type: "stateMatch",
+            path: "energy.status",
+            map: [{ value: "surplus", state: "opportunity" }],
+            default: "neutral",
+            display: true,
+          },
+        ],
+        displayParts: [{ path: "batteries.house.soc" }],
+      },
+      c,
+      new Map(),
+    );
+    assert.strictEqual(t.displayValue, "surplus —");
+  });
+
+  test("empty displayParts array is no-op (admin UI emits [] for blank fields)", () => {
+    const c = new PathCache();
+    c.set("soc", 0.92);
+    const t = evalTile(
+      {
+        id: "bank",
+        label: "Bank",
+        checks: [
+          {
+            type: "banded",
+            path: "soc",
+            low: { warn: 0.3 },
+            display: true,
+            unit: "ratio",
+          },
+        ],
+        displayParts: [],
+      },
+      c,
+      new Map(),
+    );
+    assert.strictEqual(t.displayValue, "92%");
+  });
+
   test("opportunity from one check with green others -> opportunity (SPEC §2.1)", () => {
     const c = new PathCache();
     c.set("soc", 0.97);

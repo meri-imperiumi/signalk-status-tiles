@@ -239,4 +239,33 @@ describe("paths", () => {
       );
     }
   });
+
+  test("collects displayParts paths (composed headlines get subscriptions)", () => {
+    const config = {
+      tiles: [
+        {
+          id: "energy",
+          checks: [
+            {
+              type: "stateMatch",
+              path: "electrical.energy.prediction.status",
+            },
+          ],
+          displayParts: [
+            { path: "electrical.batteries.house.capacity.stateOfCharge" },
+            // a path already watched by a check must not duplicate
+            { path: "electrical.energy.prediction.status" },
+          ],
+        },
+      ],
+    };
+    const paths = collectPaths(config);
+    assert.ok(
+      paths.includes("electrical.batteries.house.capacity.stateOfCharge"),
+    );
+    assert.strictEqual(
+      paths.filter((p) => p === "electrical.energy.prediction.status").length,
+      1,
+    );
+  });
 });
