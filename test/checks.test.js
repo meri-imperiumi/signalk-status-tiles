@@ -118,6 +118,27 @@ describe("checks", () => {
     );
   });
 
+  test("banded: explicit reason wins over the generated threshold text", () => {
+    const c = cacheWith({ elapsed: 11100 });
+    const r = evalCheck(
+      {
+        type: "banded",
+        path: "elapsed",
+        high: { warn: 10800 },
+        reason: "fix 3h old — confirm position",
+      },
+      c,
+    );
+    assert.strictEqual(r.state, "amber");
+    assert.strictEqual(r.reason, "fix 3h old — confirm position");
+    // Without an explicit reason the threshold text is generated.
+    const generated = evalCheck(
+      { type: "banded", path: "elapsed", high: { warn: 10800 } },
+      c,
+    );
+    assert.strictEqual(generated.reason, "elapsed above 10800");
+  });
+
   test("banded: per-side configurable states — high side as opportunity (SPEC §2.1, §3.3)", () => {
     // Asymmetric energy-forecast metric: low SoC = deficit (problem),
     // high SoC = surplus (opportunity, not a warning).

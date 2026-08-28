@@ -314,6 +314,26 @@ describe("tile aggregation", () => {
     assert.deepStrictEqual(t.footer[2], { label: "Total", value: "358 W" });
   });
 
+  test("footer renders a published NULL as a dash, not the string 'null'", () => {
+    const c = new PathCache();
+    c.set("dr.good", true);
+    // Upstream publishes NULL to mean "figure suppressed right now" —
+    // e.g. DR divergence while moored/anchored.
+    c.set("dr.distance", null);
+    const t = evalTile(
+      {
+        id: "dr",
+        label: "DR",
+        checks: [{ type: "boolean", path: "dr.good", badWhen: false }],
+        footer: [{ label: "DR–GPS", path: "dr.distance" }],
+      },
+      c,
+      new Map(),
+    );
+    assert.strictEqual(t.state, "green");
+    assert.deepStrictEqual(t.footer[0], { label: "DR–GPS", value: "—" });
+  });
+
   test("footer applies SI prefixing via meta.units or inline unit (3190 Wh -> 3.19 kWh)", () => {
     const c = new PathCache();
     // No displayUnits metadata at all — the standard `units` meta field

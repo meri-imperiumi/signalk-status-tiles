@@ -181,6 +181,9 @@ function resolvePathText(f, cache) {
   const meta = cache.metaFor(f.path);
   if (!cache.has(f.path)) return "—";
   const raw = cache.value(f.path);
+  // A published NULL (e.g. an upstream "figure suppressed right now"
+  // sentinel) is unknown, not the string "null".
+  if (raw == null) return "—";
   const n = valueToNumber(raw);
   // Numeric values get display-unit conversion (K→°C, etc.).
   // Strings/booleans (e.g. state enums like "deployed") are shown as-is.

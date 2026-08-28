@@ -143,7 +143,7 @@ describe("config validation", () => {
     );
   });
 
-  test("tile active predicate is validated (empty/depth)", () => {
+  test("tile active predicate is validated (empty→warning, depth→error)", () => {
     const empty = {
       tiles: [
         {
@@ -154,8 +154,17 @@ describe("config validation", () => {
         },
       ],
     };
+    // The admin UI's form emits blank active scaffolds — an empty
+    // predicate is a no-op the engine ignores, so it must warn, never
+    // block start with an error.
     assert.ok(
-      validateConfig(empty).errors.some((e) =>
+      empty &&
+        validateConfig(empty).warnings.some((e) =>
+          e.includes("active predicate is empty"),
+        ),
+    );
+    assert.ok(
+      !validateConfig(empty).errors.some((e) =>
         e.includes("active predicate is empty"),
       ),
     );

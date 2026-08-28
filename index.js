@@ -271,7 +271,9 @@ export default function (app) {
      */
     start(config) {
       const { errors, warnings } = validateConfig(config);
-      for (const w of warnings) app.warn(w);
+      // The server app has no `warn` (only error/debug/setPluginStatus) —
+      // warnings are advisory, so no-op rather than crash when absent.
+      for (const w of warnings) app.warn?.(w);
       if (errors.length > 0) {
         // Surface every error; the server still starts so the user can
         // fix the form rather than being locked out.

@@ -189,16 +189,16 @@ function evalBanded(check, cache, now) {
   let reason = check.reason || check.path;
   if (check.high?.crit != null && v > check.high.crit) {
     state = highCritState;
-    reason = `${check.path} above ${check.high.crit}`;
+    reason = check.reason || `${check.path} above ${check.high.crit}`;
   } else if (check.low?.crit != null && v < check.low.crit) {
     state = lowCritState;
-    reason = `${check.path} below ${check.low.crit}`;
+    reason = check.reason || `${check.path} below ${check.low.crit}`;
   } else if (check.high?.warn != null && v > check.high.warn) {
     state = highWarnState;
-    reason = `${check.path} above ${check.high.warn}`;
+    reason = check.reason || `${check.path} above ${check.high.warn}`;
   } else if (check.low?.warn != null && v < check.low.warn) {
     state = lowWarnState;
-    reason = `${check.path} below ${check.low.warn}`;
+    reason = check.reason || `${check.path} below ${check.low.warn}`;
   }
   return {
     state,

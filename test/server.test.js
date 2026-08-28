@@ -162,6 +162,28 @@ test("start tolerates servers without handleMessage", () => {
   assert.doesNotThrow(() => plugin.start(SAMPLE));
 });
 
+test("start tolerates a warn-less app when the config produces warnings", () => {
+  // signalk-server's app exposes error/debug/setPluginStatus but no
+  // `warn` — a config with admin-UI blank active scaffolds validates
+  // with warnings, and surfacing them must not crash plugin start
+  // (regression: "TypeError: app.warn is not a function" → 404s).
+  const app = fakeApp();
+  delete app.warn;
+  const plugin = pluginFactory(app);
+  assert.doesNotThrow(() =>
+    plugin.start({
+      tiles: [
+        {
+          id: "ac",
+          label: "AC",
+          active: { allOf: [], anyOf: [], not: { whenMissing: "false" } },
+          checks: [{ type: "boolean", path: "p" }],
+        },
+      ],
+    }),
+  );
+});
+
 test("/configuration serves the config with its hash", () => {
   const app = fakeApp();
   const plugin = pluginFactory(app);

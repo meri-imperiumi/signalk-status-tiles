@@ -102,8 +102,14 @@ export function validateConfig(config) {
           `Tile "${tile.id}" active predicate nests to depth ${depth} (max ${MAX_PREDICATE_DEPTH}); split into a named context`,
         );
       }
+      // An empty predicate is a no-op the engine deliberately ignores
+      // (tile.js: the admin UI's form emits blank scaffolds), so it is a
+      // warning ("this field does nothing"), never a start-blocking
+      // error — the form's own output must validate.
       if (isEmptyPredicate(tile.active)) {
-        errors.push(`Tile "${tile.id}" active predicate is empty`);
+        warnings.push(
+          `Tile "${tile.id}" active predicate is empty — ignored (no green→neutral downgrade)`,
+        );
       }
     }
     if (!tile.checks || tile.checks.length === 0) {
