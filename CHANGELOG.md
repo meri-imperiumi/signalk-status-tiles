@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   their active panel from the webapp via a new chrome-bar "+" button
   (admin-only — the resources API can't distinguish admin from
   read-only, so the affordance itself is gated by an admin probe).
+  The picker renders each set's tiles through the real evaluator
+  against synthesized healthy sample data, so each preview shows its
+  actual state/color and headline value rather than a grey placeholder.
   Copying merges the set's tiles and contexts into the stored config,
   skipping (never overwriting) any whose id already exists —
   re-adding is idempotent, and a user's edits are never clobbered.

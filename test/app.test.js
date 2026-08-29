@@ -615,32 +615,39 @@ test("openExamples renders set cards from the resources API", async () => {
   const cards = el.gridEl.examplesList.children;
   assert.equal(cards.length, 1, "one set card");
   assert.equal(cards[0].children[0].textContent, "Energy outlook");
-  // Per-set tile preview rendered through the real #buildTile/#paintTile:
-  // neutral state (no data yet = the add-time appearance), the real
-  // label, a “—” no-data placeholder in the value slot (so the tile
-  // isn't an empty box), footer labels with “—” values, and a muted
-  // caption naming the check type + watched path.
+  // Per-set tile preview rendered through the real evaluator against
+  // synthesized sample data (public/lib/preview.js): a notification
+  // check evaluates green (healthy), with the real label. The check
+  // isn't `display`, so the headline slot is hidden (no value) — honest,
+  // matching how a green notification tile looks in the live grid, not
+  // a grey "—" placeholder. Footer labels render with "—" values (no
+  // sample data for footer paths), and a muted caption names the check
+  // type + watched path.
   const preview = cards[0].children[3];
   assert.equal(preview.className, "examples-preview", "preview container");
   const wrap = preview.children[0];
   assert.equal(wrap.className, "examples-tile-wrap");
   const tileEl = wrap.children[0];
-  assert.equal(tileEl.className, "tile neutral", "preview tile is neutral");
+  assert.equal(
+    tileEl.className,
+    "tile theme-green lit",
+    "preview tile is green",
+  );
   assert.equal(
     tileEl.children[0].textContent,
     "Energy surplus",
     "label rendered",
   );
-  // Value slot shows a “—” placeholder (no live data in preview).
-  assert.equal(tileEl.children[1].textContent, "—", "value placeholder");
-  assert.notEqual(tileEl.children[1].style.display, "none", "value visible");
+  // No display check → no headline value; the slot is hidden, not a "—".
+  assert.equal(tileEl.children[1].textContent, "", "no headline value");
+  assert.equal(tileEl.children[1].style.display, "none", "value slot hidden");
   const footer = tileEl.children[3];
   assert.equal(footer.children.length, 1, "one footer entry");
   assert.equal(footer.children[0].children[0].textContent, "Window");
   assert.equal(
     footer.children[0].children[1].textContent,
     "—",
-    "footer value is — until data flows",
+    "footer value is — (no sample data for footer paths)",
   );
   const caption = wrap.children[1];
   assert.equal(caption.className, "examples-checks");

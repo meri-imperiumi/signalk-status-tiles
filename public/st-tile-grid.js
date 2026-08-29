@@ -256,12 +256,13 @@ class StTileGrid extends HTMLElement {
         cursor: default;
       }
       /* Per-set tile preview: each tile is rendered through the real
-         #buildTile/#paintTile so the user sees the actual tile — label,
-         footer labels, neutral state (no data yet is exactly how it looks
-         the moment it's added). Compact fixed sizing; the full-grid
+         #buildTile/#paintTile from the evaluator's output (sample data
+         fed by public/lib/preview.js), so the user sees the actual tile
+         — label, headline value, footer labels, and a healthy state/color
+         — not an empty grey card. Compact fixed sizing; the full-grid
          vh/vw units would be far too large in the overlay. The .tile
-         rules above still apply (brackets, neutral styling, theme vars);
-         these overrides only shrink them. */
+         rules above still apply (brackets, theme vars); these overrides
+         only shrink them. */
       .examples-preview {
         display: flex;
         flex-wrap: wrap;
@@ -952,13 +953,18 @@ class StTileGrid extends HTMLElement {
 
   /**
    * Renders the examples picker overlay: a card per set with its
-   * name, source plugin, description, and an Add button. Sets whose
-   * tiles are all already present are badged "Already added" and their
-   * Add buttons disabled. Clicking Add dispatches `st-examples-add`
-   * carrying the set object — the app PUTs it and closes the overlay
-   * (a config-hash reload refreshes the grid).
+   * name, source plugin, description, live tile previews, and an Add
+   * button. Sets whose tiles are all already present are badged "Already
+   * added" and their Add buttons disabled. Clicking Add dispatches
+   * `st-examples-add` carrying the set object — the app PUTs it and
+   * closes the overlay (a config-hash reload refreshes the grid).
    *
-   * @param {{sets: Array<{source: string, set: object}>, alreadyAdded?: Set<string>}} opts
+   * Each set entry carries `preview`: the set's tiles rendered through
+   * the real evaluator against synthesized sample data (computed by the
+   * app via public/lib/preview.js), so each preview tile shows its
+   * actual state/color and headline value rather than a grey placeholder.
+   *
+   * @param {{sets: Array<{source: string, set: object, preview?: Array<object>}>, alreadyAdded?: Set<string>}} opts
    */
   openExamples({ sets, alreadyAdded }) {
     this.examplesErrorEl.textContent = "";
@@ -972,7 +978,7 @@ class StTileGrid extends HTMLElement {
       empty.textContent = "No example tile sets available.";
       this.examplesList.append(empty);
     }
-    for (const { source, set } of list) {
+    for (const { source, set, preview: renderedTiles } of list) {
       const card = document.createElement("div");
       card.className = "examples-set";
       const h3 = document.createElement("h3");
@@ -983,14 +989,17 @@ class StTileGrid extends HTMLElement {
       const desc = document.createElement("div");
       desc.className = "desc";
       desc.textContent = set.description || "";
-      // Live tile previews: render each tile through the real
-      // #buildTile/#paintTile so the user sees the actual tile, not a
-      // text card. Neutral state (no data yet) is exactly how it looks
-      // the moment it's added; it colors up as deltas arrive post-copy.
+      // Live tile previews: each tile is rendered through the real
+      // #buildTile/#paintTile from the evaluator's output (sample data
+      // fed by public/lib/preview.js via the app), so the user sees the
+      // actual tile — label, headline value, footer, and a healthy
+      // state/color — not an empty grey card.
       const preview = document.createElement("div");
       preview.className = "examples-preview";
-      for (const t of Array.isArray(set.tiles) ? set.tiles : []) {
-        preview.append(this.#buildPreviewTile(t));
+      const configTiles = Array.isArray(set.tiles) ? set.tiles : [];
+      const rendered = Array.isArray(renderedTiles) ? renderedTiles : [];
+      for (let i = 0; i < configTiles.length; i++) {
+        preview.append(this.#buildPreviewTile(rendered[i], configTiles[i]));
       }
       const btn = document.createElement("button");
       btn.className = "add-set-btn";
@@ -1015,44 +1024,37 @@ class StTileGrid extends HTMLElement {
   }
 
   /**
-   * Builds a compact preview of one example tile by synthesizing the
-   * engine's rendered-tile shape and handing it to the real #buildTile/
-   * #paintTile. The preview renders neutral (no data yet = exactly the
-   * add-time appearance), with the real label and footer labels (values
-   * “—” until live data flows). A muted caption below lists the check
-   * type(s) and watched path(s) so the user sees what the tile watches.
-   * @param {object} configTile - a tile in config shape (SPEC §9)
+   * Builds a compact preview of one example tile: the rendered tile
+   * (the evaluator's output from synthesized sample data, supplied by
+   * the app via public/lib/preview.js) is handed to the real
+   * #buildTile/#paintTile, so the tile shows its actual state/color,
+   * label, headline value, and footer. A muted caption below lists the
+   * check type(s) and watched path(s) (from the config tile) so the
+   * user sees what the tile watches.
+   * @param {object} rendered - the evaluator's rendered-tile shape
+   *   ({id, state, label, reason, displayValue, footer})
+   * @param {object} configTile - the tile in config shape (SPEC §9),
+   *   used only for the caption's check summary
    * @returns {HTMLElement}
    */
-  #buildPreviewTile(configTile) {
+  #buildPreviewTile(rendered, configTile) {
     const wrap = document.createElement("div");
     wrap.className = "examples-tile-wrap";
-    const footer = (
-      Array.isArray(configTile.footer) ? configTile.footer : []
-    ).map((f) => ({
-      label: f.label || shortPath(f.path),
-      value: "—",
-    }));
-    // The preview has no live data, so the value slot would be hidden
-    // (#paintTile sets display:none when displayValue is null), leaving
-    // a big empty box with just a tiny label — the tile reads as blank.
-    // Show a “—” no-data placeholder in the value slot, matching the
-    // footer “—” values: honest (no data yet), and it reveals the tile's
-    // real visual structure (where the value will appear, the bracket
-    // styling) so the user sees an actual tile, not an empty card.
-    const rendered = {
-      id: configTile.id,
-      label: configTile.label,
+    // Fall back to a neutral shape if the app supplied no rendered tile
+    // (defensive: a set whose preview failed to compute still lists its
+    // tiles rather than blanking).
+    const t = rendered || {
+      id: configTile?.id,
+      label: configTile?.label || configTile?.id,
       state: "neutral",
-      displayValue: "—",
       reason: "",
-      footer,
+      footer: [],
     };
-    const tileEl = this.#buildTile(rendered);
+    const tileEl = this.#buildTile(t);
     wrap.append(tileEl);
     const caption = document.createElement("div");
     caption.className = "examples-checks";
-    const checks = Array.isArray(configTile.checks) ? configTile.checks : [];
+    const checks = Array.isArray(configTile?.checks) ? configTile.checks : [];
     caption.textContent = checks.map(checkSummary).join(", ");
     wrap.append(caption);
     return wrap;

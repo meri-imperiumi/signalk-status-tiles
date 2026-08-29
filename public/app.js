@@ -24,6 +24,7 @@ import {
   modeFromDelta,
 } from "./lib/mode.js";
 import { collectPaths, unwrapConfig } from "./lib/paths.js";
+import { previewTiles } from "./lib/preview.js";
 import { fetchVesselName } from "./lib/vessel.js";
 import { SignalKStream } from "./st-stream.js";
 import "./st-tile-grid.js";
@@ -265,7 +266,14 @@ class StApp extends HTMLElement {
       const collection = await res.json();
       const flat = flattenExamplesCollection(collection);
       const alreadyAdded = fullyAddedSetIds(flat, this.config);
-      this.gridEl.openExamples({ sets: flat, alreadyAdded });
+      // Render each set's tiles through the real evaluator against
+      // synthesized sample data so the preview shows actual states and
+      // values, not grey placeholders (public/lib/preview.js).
+      const withPreviews = flat.map((entry) => ({
+        ...entry,
+        preview: previewTiles(entry.set),
+      }));
+      this.gridEl.openExamples({ sets: withPreviews, alreadyAdded });
     } catch (err) {
       this.gridEl.examplesError = `Failed to load: ${err.message}`;
       this.gridEl.openExamples({ sets: [], alreadyAdded: new Set() });
