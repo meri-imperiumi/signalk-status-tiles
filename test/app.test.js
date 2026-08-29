@@ -529,6 +529,16 @@ function resetExamplesServer() {
   server.putBodies = [];
 }
 
+/** Finds a set card's Add button by class — robust to the preview
+ *  tile elements inserted ahead of it in the card. */
+function addBtn(card) {
+  for (const c of card.children) {
+    if (typeof c.className === "string" && c.className.includes("add-set-btn"))
+      return c;
+  }
+  return null;
+}
+
 /** A small example set returned by a fake resource provider. */
 const EXAMPLE_SET = {
   id: "energy-outlook",
@@ -541,7 +551,19 @@ const EXAMPLE_SET = {
     },
   ],
   tiles: [
-    { id: "energySurplus", checks: [{ type: "notification", path: "n" }] },
+    {
+      id: "energySurplus",
+      label: "Energy surplus",
+      footer: [
+        { label: "Window", path: "electrical.energy.prediction.surplus.from" },
+      ],
+      checks: [
+        {
+          type: "notification",
+          path: "notifications.electrical.energy.surplus",
+        },
+      ],
+    },
   ],
 };
 
@@ -593,8 +615,38 @@ test("openExamples renders set cards from the resources API", async () => {
   const cards = el.gridEl.examplesList.children;
   assert.equal(cards.length, 1, "one set card");
   assert.equal(cards[0].children[0].textContent, "Energy outlook");
+  // Per-set tile preview rendered through the real #buildTile/#paintTile:
+  // neutral state (no data yet = the add-time appearance), the real
+  // label, a “—” no-data placeholder in the value slot (so the tile
+  // isn't an empty box), footer labels with “—” values, and a muted
+  // caption naming the check type + watched path.
+  const preview = cards[0].children[3];
+  assert.equal(preview.className, "examples-preview", "preview container");
+  const wrap = preview.children[0];
+  assert.equal(wrap.className, "examples-tile-wrap");
+  const tileEl = wrap.children[0];
+  assert.equal(tileEl.className, "tile neutral", "preview tile is neutral");
+  assert.equal(
+    tileEl.children[0].textContent,
+    "Energy surplus",
+    "label rendered",
+  );
+  // Value slot shows a “—” placeholder (no live data in preview).
+  assert.equal(tileEl.children[1].textContent, "—", "value placeholder");
+  assert.notEqual(tileEl.children[1].style.display, "none", "value visible");
+  const footer = tileEl.children[3];
+  assert.equal(footer.children.length, 1, "one footer entry");
+  assert.equal(footer.children[0].children[0].textContent, "Window");
+  assert.equal(
+    footer.children[0].children[1].textContent,
+    "—",
+    "footer value is — until data flows",
+  );
+  const caption = wrap.children[1];
+  assert.equal(caption.className, "examples-checks");
+  assert.match(caption.textContent, /^notification · /);
   // Add button enabled (not already added).
-  const btn = cards[0].children[3];
+  const btn = addBtn(cards[0]);
   assert.equal(btn.textContent, "Add");
   assert.equal(btn.disabled, false);
   el.disconnectedCallback();
@@ -622,7 +674,7 @@ test("already-added sets are badged and disabled", async () => {
   );
   await flush();
 
-  const btn = el.gridEl.examplesList.children[0].children[3];
+  const btn = addBtn(el.gridEl.examplesList.children[0]);
   assert.equal(btn.textContent, "Already added");
   assert.equal(btn.disabled, true);
   el.disconnectedCallback();

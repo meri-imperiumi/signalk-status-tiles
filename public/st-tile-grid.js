@@ -255,6 +255,47 @@ class StTileGrid extends HTMLElement {
         color: var(--color-grey, #666666);
         cursor: default;
       }
+      /* Per-set tile preview: each tile is rendered through the real
+         #buildTile/#paintTile so the user sees the actual tile — label,
+         footer labels, neutral state (no data yet is exactly how it looks
+         the moment it's added). Compact fixed sizing; the full-grid
+         vh/vw units would be far too large in the overlay. The .tile
+         rules above still apply (brackets, neutral styling, theme vars);
+         these overrides only shrink them. */
+      .examples-preview {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1vh 1vw;
+        margin: 1.2vh 0;
+      }
+      .examples-tile-wrap {
+        display: flex;
+        flex-direction: column;
+        width: 17vw;
+        min-width: 0;
+      }
+      .examples-preview .tile {
+        width: 100%;
+        min-height: 11vh;
+        padding: 1.2vh 1vw;
+      }
+      .examples-preview .tile .label { font-size: 1.5vh; }
+      .examples-preview .tile .value { font-size: 3.5vh; }
+      .examples-preview .tile .reason { font-size: 1.2vh; }
+      .examples-preview .tile .footer-label { font-size: 1.1vh; }
+      .examples-preview .tile .footer-value { font-size: 1.4vh; }
+      .examples-preview .tile::before,
+      .examples-preview .tile::after {
+        width: 1.6vh;
+        height: 1.6vh;
+      }
+      .examples-checks {
+        font-size: 1.2vh;
+        color: var(--text-muted, #a0a0b5);
+        margin-top: 0.5vh;
+        letter-spacing: 0.04em;
+        overflow-wrap: anywhere;
+      }
       .examples-busy,
       .examples-error-msg {
         font-size: 1.7vh;
@@ -942,6 +983,15 @@ class StTileGrid extends HTMLElement {
       const desc = document.createElement("div");
       desc.className = "desc";
       desc.textContent = set.description || "";
+      // Live tile previews: render each tile through the real
+      // #buildTile/#paintTile so the user sees the actual tile, not a
+      // text card. Neutral state (no data yet) is exactly how it looks
+      // the moment it's added; it colors up as deltas arrive post-copy.
+      const preview = document.createElement("div");
+      preview.className = "examples-preview";
+      for (const t of Array.isArray(set.tiles) ? set.tiles : []) {
+        preview.append(this.#buildPreviewTile(t));
+      }
       const btn = document.createElement("button");
       btn.className = "add-set-btn";
       const added = alreadyAdded?.has(set.id);
@@ -958,10 +1008,54 @@ class StTileGrid extends HTMLElement {
         );
       });
       this._exampleButtons.push(btn);
-      card.append(h3, src, desc, btn);
+      card.append(h3, src, desc, preview, btn);
       this.examplesList.append(card);
     }
     this.examplesOverlay.style.display = "";
+  }
+
+  /**
+   * Builds a compact preview of one example tile by synthesizing the
+   * engine's rendered-tile shape and handing it to the real #buildTile/
+   * #paintTile. The preview renders neutral (no data yet = exactly the
+   * add-time appearance), with the real label and footer labels (values
+   * “—” until live data flows). A muted caption below lists the check
+   * type(s) and watched path(s) so the user sees what the tile watches.
+   * @param {object} configTile - a tile in config shape (SPEC §9)
+   * @returns {HTMLElement}
+   */
+  #buildPreviewTile(configTile) {
+    const wrap = document.createElement("div");
+    wrap.className = "examples-tile-wrap";
+    const footer = (
+      Array.isArray(configTile.footer) ? configTile.footer : []
+    ).map((f) => ({
+      label: f.label || shortPath(f.path),
+      value: "—",
+    }));
+    // The preview has no live data, so the value slot would be hidden
+    // (#paintTile sets display:none when displayValue is null), leaving
+    // a big empty box with just a tiny label — the tile reads as blank.
+    // Show a “—” no-data placeholder in the value slot, matching the
+    // footer “—” values: honest (no data yet), and it reveals the tile's
+    // real visual structure (where the value will appear, the bracket
+    // styling) so the user sees an actual tile, not an empty card.
+    const rendered = {
+      id: configTile.id,
+      label: configTile.label,
+      state: "neutral",
+      displayValue: "—",
+      reason: "",
+      footer,
+    };
+    const tileEl = this.#buildTile(rendered);
+    wrap.append(tileEl);
+    const caption = document.createElement("div");
+    caption.className = "examples-checks";
+    const checks = Array.isArray(configTile.checks) ? configTile.checks : [];
+    caption.textContent = checks.map(checkSummary).join(", ");
+    wrap.append(caption);
+    return wrap;
   }
 
   /** Hides the overlay (called by the app after a successful copy). */
@@ -1028,6 +1122,28 @@ export function shortenReason(text) {
     /[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+/g,
     (m) => lastSegment(m),
   );
+}
+
+/**
+ * One-line summary of a check for the examples-preview caption: type
+ * plus the path(s) it watches, shortened to the differing tail. Lets the
+ * user see what a preview tile watches even though the tile itself is
+ * neutral (no live data yet). Keeps the caption compact at glance size.
+ * @param {object} check
+ * @returns {string}
+ */
+export function checkSummary(check) {
+  const t = check?.type || "check";
+  if (t === "alarmGroup") {
+    const ps = Array.isArray(check.paths) ? check.paths : [];
+    return ps.length ? `${t} · ${ps.map(shortPath).join(", ")}` : t;
+  }
+  if (t === "agreement") {
+    return `${t} · ${shortPath(check.path || "")} ≠ ${shortPath(check.path2 || "")}`;
+  }
+  if (t === "compound") return t;
+  const p = check?.path;
+  return p ? `${t} · ${shortPath(p)}` : t;
 }
 
 customElements.define("st-tile-grid", StTileGrid);
