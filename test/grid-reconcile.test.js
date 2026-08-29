@@ -41,6 +41,16 @@ class FakeElement {
     this.dataset = {};
     this.textContent = "";
     this._innerHTML = "";
+    /** @type {Record<string, Function[]>} */
+    this._listeners = {};
+  }
+  addEventListener(type, listener) {
+    if (!this._listeners[type]) this._listeners[type] = [];
+    this._listeners[type].push(listener);
+  }
+  dispatchEvent(event) {
+    for (const l of this._listeners[event.type] || []) l(event);
+    return true;
   }
   set innerHTML(v) {
     this._innerHTML = v;

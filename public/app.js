@@ -16,6 +16,7 @@
 import { AnomalyLog } from "./lib/anomaly-log.js";
 import { CONFIG_HASH_PATH, configHashFromDelta } from "./lib/config-hash.js";
 import { createEngine } from "./lib/engine.js";
+import { flattenExamplesCollection, fullyAddedSetIds } from "./lib/examples.js";
 import {
   applyMode,
   ENVIRONMENT_MODE_PATH,
@@ -28,6 +29,12 @@ import { SignalKStream } from "./st-stream.js";
 import "./st-tile-grid.js";
 
 const API_BASE = "/signalk/v2/api/status-tiles";
+/** Plugin id (mirrors PLUGIN_ID in index.js). */
+const PLUGIN_ID = "signalk-status-tiles";
+/** Admin route base: routes under here are admin-gated by the server. */
+const PLUGIN_ROUTER = `/plugins/${PLUGIN_ID}`;
+/** Read-only aggregated example sets from all providing plugins. */
+const EXAMPLES_RESOURCES = "/signalk/v2/api/resources/statusTileExamples";
 const EVAL_INTERVAL_MS = 1000; // timer-driven staleness discovery tick
 /** Config-fetch retries: a plugin restart answers 503 for a moment. */
 const CONFIG_RETRIES = 4;
@@ -212,6 +219,96 @@ class StApp extends HTMLElement {
       this.engine.evaluate();
     } catch (err) {
       fail("initial evaluate", err);
+    }
+
+    // Admin probe: if the user is admin, show the chrome-bar "+" and
+    // wire the examples overlay. Read-only users get 401/403 and never
+    // see the affordance (the resources API they can read can't tell
+    // admin from read-only, so the button itself is the gate).
+    this.#probeAdmin();
+  }
+
+  /**
+   * Probes admin access via GET /examples (admin-gated route). On 200,
+   * shows the "+" button and wires the examples overlay events. On
+   * 401/403 or error, the button stays hidden — read-only users can
+   * still read the resources API but must not see the copy affordance.
+   */
+  async #probeAdmin() {
+    try {
+      const res = await fetch(`${PLUGIN_ROUTER}/examples`);
+      if (!res.ok) return;
+      this.gridEl.adminMode = true;
+      this.gridEl.addEventListener("st-examples-open", () =>
+        this.#openExamples(),
+      );
+      this.gridEl.addEventListener("st-examples-add", (e) =>
+        this.#addExample(e.detail.set),
+      );
+    } catch {
+      // Non-admin or offline: the "+" stays hidden.
+    }
+  }
+
+  /**
+   * Fetches the aggregated example-set collection from the resources
+   * API, flattens it, computes which sets are already fully added, and
+   * opens the picker overlay. Defensive: a bad provider entry is
+   * skipped by flattenExamplesCollection, never thrown over.
+   */
+  async #openExamples() {
+    this.gridEl.examplesError = "";
+    this.gridEl.examplesBusy = true;
+    try {
+      const res = await fetch(EXAMPLES_RESOURCES);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const collection = await res.json();
+      const flat = flattenExamplesCollection(collection);
+      const alreadyAdded = fullyAddedSetIds(flat, this.config);
+      this.gridEl.openExamples({ sets: flat, alreadyAdded });
+    } catch (err) {
+      this.gridEl.examplesError = `Failed to load: ${err.message}`;
+      this.gridEl.openExamples({ sets: [], alreadyAdded: new Set() });
+    } finally {
+      this.gridEl.examplesBusy = false;
+    }
+  }
+
+  /**
+   * PUTs a set's tiles/contexts to the admin examples route. On
+   * success, closes the overlay — the server's restart republishes the
+   * config hash, triggering the standard reload path (stream delta or
+   * poll) that refreshes the grid. On 400, surfaces the validation
+   * errors in the overlay so the user can see what conflicted.
+   * @param {object} set - the set object `{ tiles, contexts? }`
+   */
+  async #addExample(set) {
+    this.gridEl.examplesError = "";
+    this.gridEl.examplesBusy = true;
+    try {
+      const res = await fetch(`${PLUGIN_ROUTER}/examples`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tiles: set.tiles,
+          contexts: set.contexts || [],
+        }),
+      });
+      if (res.status === 400) {
+        const body = await res.json().catch(() => ({}));
+        const errs =
+          Array.isArray(body.errors) && body.errors.length > 0
+            ? `\n${body.errors.join("\n")}`
+            : "";
+        this.gridEl.examplesError = `${body.message || "Invalid config"}${errs}`;
+        return;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      this.gridEl.closeExamples();
+    } catch (err) {
+      this.gridEl.examplesError = `Failed to add: ${err.message}`;
+    } finally {
+      this.gridEl.examplesBusy = false;
     }
   }
 

@@ -57,6 +57,7 @@ class StTileGrid extends HTMLElement {
         display: flex;
         flex-direction: column;
         height: 100%;
+        position: relative;
         background: var(--bg-base, #000000);
         color: var(--text-main, #ffffff);
         font-family: system-ui, -apple-system, sans-serif;
@@ -154,6 +155,113 @@ class StTileGrid extends HTMLElement {
         letter-spacing: 0.12em;
         font-weight: 600;
       }
+      /* Chrome-bar "+" (SPEC §11, example-tiles-plan.md): shown only
+         when the server confirms admin access via the /examples probe.
+         Triggers the examples picker overlay; read-only users never see
+         it (the resources API they *can* read can't distinguish admin
+         from read-only, so the affordance itself must be gated). */
+      .add-btn {
+        background: none;
+        border: 1px solid rgba(var(--color-grey-rgb, 102, 102, 102), 0.55);
+        color: var(--text-muted, #a0a0b5);
+        font-size: 2.4vh;
+        font-weight: 700;
+        line-height: 1;
+        width: 2.6vh;
+        height: 2.6vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        padding: 0;
+      }
+      .add-btn:hover { color: var(--text-main, #ffffff); }
+      /* Full-viewport overlay listing available example sets. Covers the
+         grid (z-index above tiles) so the helm view isn't half-visible
+         behind a dialog. */
+      .examples-overlay {
+        position: absolute;
+        inset: 0;
+        background: var(--bg-base, #000000);
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        padding: 3vh 5vw;
+        overflow-y: auto;
+      }
+      .examples-overlay h2 {
+        font-size: 2.4vh;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        margin: 0 0 0.5vh;
+      }
+      .examples-subtitle {
+        font-size: 1.5vh;
+        color: var(--text-muted, #a0a0b5);
+        margin: 0 0 2vh;
+      }
+      .examples-close {
+        position: absolute;
+        top: 2vh;
+        right: 3vw;
+        background: none;
+        border: 1px solid rgba(var(--color-grey-rgb, 102, 102, 102), 0.55);
+        color: var(--text-main, #ffffff);
+        font-size: 1.8vh;
+        cursor: pointer;
+        padding: 0.5vh 1.2vh;
+        letter-spacing: 0.1em;
+      }
+      .examples-list {
+        display: flex;
+        flex-direction: column;
+        gap: 1.5vh;
+        flex: 1 1 auto;
+      }
+      .examples-set {
+        border: 1px solid rgba(var(--color-grey-rgb, 102, 102, 102), 0.45);
+        padding: 1.8vh 1.8vw;
+        background: var(--bg-panel, #111414);
+      }
+      .examples-set h3 {
+        font-size: 2.2vh;
+        margin: 0;
+        color: var(--text-main, #ffffff);
+      }
+      .examples-set .source {
+        font-size: 1.4vh;
+        color: var(--text-muted, #a0a0b5);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        margin-top: 0.3vh;
+      }
+      .examples-set .desc {
+        font-size: 1.6vh;
+        color: var(--text-muted, #a0a0b5);
+        margin: 0.8vh 0;
+      }
+      .examples-set .add-set-btn {
+        background: none;
+        border: 1px solid rgba(var(--color-green-rgb, 141, 252, 187), 0.65);
+        color: var(--color-green, #8dfcbb);
+        font-size: 1.6vh;
+        padding: 0.6vh 2vw;
+        cursor: pointer;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+      .examples-set .add-set-btn:disabled {
+        border-color: rgba(var(--color-grey-rgb, 102, 102, 102), 0.4);
+        color: var(--color-grey, #666666);
+        cursor: default;
+      }
+      .examples-busy,
+      .examples-error-msg {
+        font-size: 1.7vh;
+        margin-top: 1vh;
+      }
+      .examples-busy { color: var(--text-muted, #a0a0b5); }
+      .examples-error-msg { color: var(--color-red, #ff5e5e); }
       .grid {
         display: grid;
         grid-auto-flow: column;
@@ -412,16 +520,68 @@ class StTileGrid extends HTMLElement {
     chromeLeft.append(vessel, this.ctxSlot, link);
     const chromeRight = document.createElement("div");
     chromeRight.className = "chrome-right";
+    /** @type {HTMLButtonElement} */
+    this.addBtn = document.createElement("button");
+    this.addBtn.className = "add-btn";
+    this.addBtn.textContent = "+";
+    this.addBtn.style.display = "none";
+    this.addBtn.title = "Add example tile set";
+    this.addBtn.addEventListener("click", () => {
+      this.dispatchEvent(
+        new CustomEvent("st-examples-open", { bubbles: true, composed: true }),
+      );
+    });
     /** @type {HTMLElement} */
     this.clockEl = document.createElement("span");
     this.clockEl.className = "clock";
-    chromeRight.append(this.clockEl);
+    chromeRight.append(this.addBtn, this.clockEl);
     chrome.append(chromeLeft, chromeRight);
     const grid = document.createElement("div");
     grid.className = "grid";
     const error = document.createElement("div");
     error.className = "error";
-    this.shadowRoot.append(style, chrome, grid, error);
+    // Examples picker overlay (doc/example-tiles-plan.md). Hidden until
+    // openExamples() — the app fetches the resources-API collection,
+    // flattens it, and passes it in. Lives in the grid's shadow DOM so
+    // it shares the flat-panel theme without a second stylesheet.
+    const examplesOverlay = document.createElement("div");
+    examplesOverlay.className = "examples-overlay";
+    examplesOverlay.style.display = "none";
+    const examplesH2 = document.createElement("h2");
+    examplesH2.textContent = "Example tile sets";
+    const examplesSubtitle = document.createElement("div");
+    examplesSubtitle.className = "examples-subtitle";
+    examplesSubtitle.textContent =
+      "Copy a ready-made set into your panel. Existing tiles are never overwritten.";
+    /** @type {HTMLButtonElement} */
+    const examplesClose = document.createElement("button");
+    examplesClose.className = "examples-close";
+    examplesClose.textContent = "\u2715";
+    examplesClose.addEventListener("click", () => this.closeExamples());
+    /** @type {HTMLElement} */
+    this.examplesList = document.createElement("div");
+    this.examplesList.className = "examples-list";
+    /** @type {HTMLElement} */
+    this.examplesBusyEl = document.createElement("div");
+    this.examplesBusyEl.className = "examples-busy";
+    this.examplesBusyEl.textContent = "Adding…";
+    this.examplesBusyEl.style.display = "none";
+    /** @type {HTMLElement} */
+    this.examplesErrorEl = document.createElement("div");
+    this.examplesErrorEl.className = "examples-error-msg";
+    examplesOverlay.append(
+      examplesH2,
+      examplesSubtitle,
+      examplesClose,
+      this.examplesList,
+      this.examplesBusyEl,
+      this.examplesErrorEl,
+    );
+    this.shadowRoot.append(style, chrome, grid, error, examplesOverlay);
+    /** @type {HTMLElement} */
+    this.examplesOverlay = examplesOverlay;
+    /** @type {HTMLButtonElement[]} add-set buttons (for examplesBusy) */
+    this._exampleButtons = [];
     /** @type {HTMLElement} */
     this.gridEl = grid;
     /** @type {HTMLElement} */
@@ -733,6 +893,94 @@ class StTileGrid extends HTMLElement {
       if (label.textContent !== labelText) label.textContent = labelText;
       const reasonText = `${c.zone.toUpperCase()} ANOMALY`;
       if (reason.textContent !== reasonText) reason.textContent = reasonText;
+    }
+  }
+
+  // --- Example tile sets (doc/example-tiles-plan.md) --------------------
+
+  /**
+   * Shows/hides the chrome-bar "+" button. Set by the app after the
+   * admin probe (GET /examples) succeeds: read-only users can read the
+   * resources API but must not see the copy affordance, so the button
+   * is hidden until admin access is confirmed.
+   * @param {boolean} on
+   */
+  set adminMode(on) {
+    this.addBtn.style.display = on ? "" : "none";
+  }
+
+  /**
+   * Renders the examples picker overlay: a card per set with its
+   * name, source plugin, description, and an Add button. Sets whose
+   * tiles are all already present are badged "Already added" and their
+   * Add buttons disabled. Clicking Add dispatches `st-examples-add`
+   * carrying the set object — the app PUTs it and closes the overlay
+   * (a config-hash reload refreshes the grid).
+   *
+   * @param {{sets: Array<{source: string, set: object}>, alreadyAdded?: Set<string>}} opts
+   */
+  openExamples({ sets, alreadyAdded }) {
+    this.examplesErrorEl.textContent = "";
+    this.examplesBusyEl.style.display = "none";
+    this._exampleButtons = [];
+    this.examplesList.replaceChildren();
+    const list = Array.isArray(sets) ? sets : [];
+    if (list.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "examples-subtitle";
+      empty.textContent = "No example tile sets available.";
+      this.examplesList.append(empty);
+    }
+    for (const { source, set } of list) {
+      const card = document.createElement("div");
+      card.className = "examples-set";
+      const h3 = document.createElement("h3");
+      h3.textContent = set.name || set.id;
+      const src = document.createElement("div");
+      src.className = "source";
+      src.textContent = source;
+      const desc = document.createElement("div");
+      desc.className = "desc";
+      desc.textContent = set.description || "";
+      const btn = document.createElement("button");
+      btn.className = "add-set-btn";
+      const added = alreadyAdded?.has(set.id);
+      btn.textContent = added ? "Already added" : "Add";
+      btn.dataset.added = added ? "1" : "0";
+      btn.disabled = !!added;
+      btn.addEventListener("click", () => {
+        this.dispatchEvent(
+          new CustomEvent("st-examples-add", {
+            bubbles: true,
+            composed: true,
+            detail: { set },
+          }),
+        );
+      });
+      this._exampleButtons.push(btn);
+      card.append(h3, src, desc, btn);
+      this.examplesList.append(card);
+    }
+    this.examplesOverlay.style.display = "";
+  }
+
+  /** Hides the overlay (called by the app after a successful copy). */
+  closeExamples() {
+    this.examplesOverlay.style.display = "none";
+  }
+
+  /** Error message in the overlay (e.g. a 400 on the merged config). */
+  set examplesError(msg) {
+    this.examplesErrorEl.textContent = msg || "";
+  }
+
+  /** Shows a "Adding…" indicator and disables all Add buttons while a
+   * copy is in flight (prevents double-clicks; the merge is idempotent
+   * anyway, but the UX feedback matters). */
+  set examplesBusy(on) {
+    this.examplesBusyEl.style.display = on ? "" : "none";
+    for (const btn of this._exampleButtons) {
+      btn.disabled = !!on || btn.dataset.added === "1";
     }
   }
 }

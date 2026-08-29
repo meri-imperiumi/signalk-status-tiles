@@ -24,15 +24,31 @@
 /** @typedef {import("@signalk/server-api").Plugin} Plugin */
 
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { validateConfig } from "./public/lib/config.js";
 import { CONFIG_HASH_PATH, canonicalJson } from "./public/lib/config-hash.js";
 import { createEngine } from "./public/lib/engine.js";
+import { mergeIntoConfig } from "./public/lib/examples.js";
 import { collectPaths, unwrapConfig } from "./public/lib/paths.js";
 import { buildSchema } from "./public/lib/schema.js";
 import {
   TILE_STATUS_DESCRIPTION,
   tileStatusPath,
 } from "./public/lib/status-paths.js";
+
+/**
+ * This plugin's own dogfood example set (doc/example-tiles-plan.md): the
+ * energy-predictor tiles from SPEC §7.1, self-discovered via the same
+ * `statusTileExamples` resource provider any other plugin registers.
+ * Read once at module load; a malformed file crashes plugin load on
+ * purpose (it ships with the package, so it is always well-formed).
+ */
+const STARTER_EXAMPLES = JSON.parse(
+  readFileSync(new URL("./status-tiles-examples.json", import.meta.url)),
+);
+
+/** Resource type other plugins (and this one) register example sets under. */
+const EXAMPLES_RESOURCE_TYPE = "statusTileExamples";
 
 const PLUGIN_ID = "signalk-status-tiles";
 
@@ -89,6 +105,63 @@ export default function (app) {
   let evalTimer = null;
   /** @type {Map<string, string|null>} last status published per tile id */
   const lastPublished = new Map();
+
+  // --- Example tile sets (doc/example-tiles-plan.md) ------------------
+  // This plugin both *provides* a dogfood set and *consumes* sets from
+  // other plugins via the `statusTileExamples` resource type. Provision
+  // is gated by `running` (returns {} when stopped) and registered at
+  // most once per plugin instance (a re-start without stop is possible);
+  // consumption is the webapp's job (it fetches the resources API).
+  /** @type {boolean} */
+  let running = false;
+  /** @type {boolean} resource provider registered with the server */
+  let providerRegistered = false;
+  /**
+   * The `restart` callback `start(config, restart)` receives, captured
+   * so the examples copy route can re-apply a merged config in-memory
+   * (republishing the config hash → connected webapps reload).
+   * @type {((newConfiguration: object) => void)|null}
+   */
+  let restartFn = null;
+
+  /**
+   * Registers this plugin's own `statusTileExamples` resource provider
+   * (read-only, running-gated). Idempotent per plugin instance — a
+   * re-start reuses the existing registration. Skipped silently on
+   * servers without the resource provider registry (older servers);
+   * example discovery simply won't include this plugin's dogfood set.
+   */
+  function registerExamplesProvider() {
+    if (providerRegistered) return;
+    if (typeof app.registerResourceProvider !== "function") {
+      app.error(
+        `[status-tiles] server has no resource provider registry; example discovery disabled`,
+      );
+      return;
+    }
+    app.registerResourceProvider({
+      type: EXAMPLES_RESOURCE_TYPE,
+      methods: {
+        listResources: async () =>
+          running ? { [PLUGIN_ID]: STARTER_EXAMPLES } : {},
+        getResource: async (id) => {
+          if (!running || id !== PLUGIN_ID) {
+            throw new Error(
+              `No such ${EXAMPLES_RESOURCE_TYPE} resource: ${id}`,
+            );
+          }
+          return STARTER_EXAMPLES;
+        },
+        setResource: async () => {
+          throw new Error(`${PLUGIN_ID} is a read-only provider`);
+        },
+        deleteResource: async () => {
+          throw new Error(`${PLUGIN_ID} is a read-only provider`);
+        },
+      },
+    });
+    providerRegistered = true;
+  }
 
   /**
    * Tears down the server-side evaluation: stops the tick, drops the
@@ -268,8 +341,11 @@ export default function (app) {
      * delta trigger), alongside a timer tick for staleness discovery.
      *
      * @param {object} config - Plugin configuration
+     * @param {(newConfiguration: object) => void} restart - server-provided
+     *   callback to re-apply a config in-memory (republishes the config
+     *   hash → connected webapps reload). Captured for the examples copy route.
      */
-    start(config) {
+    start(config, restart) {
       const { errors, warnings } = validateConfig(config);
       // The server app has no `warn` (only error/debug/setPluginStatus) —
       // warnings are advisory, so no-op rather than crash when absent.
@@ -286,7 +362,13 @@ export default function (app) {
       }
       pluginConfig = config || {};
       pluginConfigHash = configHash(pluginConfig);
+      running = true;
+      restartFn = typeof restart === "function" ? restart : null;
       app.debug?.(`[status-tiles] start() configHash=${pluginConfigHash}`);
+      // Register this plugin's dogfood example-set provider (idempotent
+      // per instance; running-gated). Other plugins' sets are discovered
+      // by the webapp via the resources API — nothing to do here for those.
+      registerExamplesProvider();
       // Public config endpoint. Mounted on the app (not the plugin
       // router) so anonymous/read-only clients can load it; see
       // CONFIG_PATH. Registered in start() so the route is live only
@@ -322,7 +404,85 @@ export default function (app) {
       teardown({ publishClears: true });
       pluginConfig = null;
       pluginConfigHash = null;
+      running = false;
+      restartFn = null;
       setStatus?.("Stopped");
+    },
+
+    /**
+     * Admin routes for copying example tile sets into the active config
+     * (doc/example-tiles-plan.md). Mounted by the server at
+     * `/plugins/${PLUGIN_ID}`; every route here is admin-gated by default.
+     *
+     * - `GET /examples` — admin probe: the webapp uses a 200 vs 401/403 to
+     *   decide whether to show the chrome-bar "+" (read-only users can
+     *   read the resources API but must not see the copy affordance). The
+     *   set list itself comes from the resources API, not this route.
+     * - `PUT /examples` — copy a set's tiles/contexts into the stored
+     *   config. The body is the set object `{ contexts?, tiles }` (the
+     *   webapp already has the full objects from the resources fetch);
+     *   an admin can already edit the config arbitrarily, so trusting the
+     *   body lowers no security floor. Merges skip-and-report per id
+     *   (idempotent re-add), validates the merged config, persists via
+     *   `savePluginOptions`, and re-applies in-memory via `restart` so the
+     *   config-hash reload path refreshes connected webapps.
+     *
+     * @param {import("express-serve-static-core").Router} router
+     */
+    registerWithRouter(router) {
+      router.get("/examples", (_req, res) => {
+        res.json({ ok: true });
+      });
+
+      router.put("/examples", (req, res) => {
+        const set = req?.body;
+        if (
+          !set ||
+          typeof set !== "object" ||
+          !Array.isArray(set.tiles) ||
+          set.tiles.length === 0
+        ) {
+          res.status(400).json({
+            message: "Body must be a set object with a non-empty tiles array",
+          });
+          return;
+        }
+        if (typeof restartFn !== "function") {
+          res.status(503).json({ message: "Plugin not started" });
+          return;
+        }
+        const stored = app.readPluginOptions();
+        const { merged, added, skipped } = mergeIntoConfig(stored, set);
+        const { errors } = validateConfig(merged);
+        if (errors.length > 0) {
+          res.status(400).json({ message: "Merged config is invalid", errors });
+          return;
+        }
+        app.savePluginOptions(merged, (err) => {
+          if (err) {
+            app.error(
+              `[status-tiles] failed to save merged examples config: ${err?.message || err}`,
+            );
+            res.status(500).json({
+              message: "Failed to save",
+              error: err?.message || String(err),
+            });
+            return;
+          }
+          // Belt and braces: persist above, re-apply in-memory here. The
+          // restart republishes the config hash → connected webapps
+          // reload. Whether restart alone persists varies across server
+          // versions, so savePluginOptions is called regardless.
+          try {
+            restartFn(merged);
+          } catch (e) {
+            app.error(
+              `[status-tiles] restart() threw after examples merge: ${e?.message || e}`,
+            );
+          }
+          res.json({ added, skipped });
+        });
+      });
     },
   };
 

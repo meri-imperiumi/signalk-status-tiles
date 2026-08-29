@@ -40,6 +40,22 @@ class FakeElement {
     this.dataset = {};
     this.textContent = "";
     this._innerHTML = "";
+    /** @type {Record<string, Function[]>} */
+    this._listeners = {};
+  }
+  addEventListener(type, listener) {
+    if (!this._listeners[type]) this._listeners[type] = [];
+    this._listeners[type].push(listener);
+  }
+  removeEventListener(type, listener) {
+    const arr = this._listeners[type];
+    if (!arr) return;
+    const i = arr.indexOf(listener);
+    if (i !== -1) arr.splice(i, 1);
+  }
+  dispatchEvent(event) {
+    for (const l of this._listeners[event.type] || []) l(event);
+    return true;
   }
   /** Mimic the browser: clearing innerHTML drops the children. */
   set innerHTML(v) {
@@ -171,10 +187,41 @@ const server = {
   configBody: null,
   statusCode: 200,
   calls: 0,
+  /** @type {{ok: boolean, status: number}|null} admin probe response */
+  adminProbe: null,
+  /** @type {object|null} resources-API collection for examples */
+  examplesCollection: null,
+  /** @type {{ok: boolean, status: number, body: object}|null} PUT /examples */
+  examplesPut: null,
+  /** Captured PUT bodies (one per PUT /examples call). */
+  putBodies: [],
 };
 
-globalThis.fetch = async () => {
+globalThis.fetch = async (url, opts) => {
   server.calls++;
+  const u = typeof url === "string" ? url : "";
+  // Admin examples probe/route (admin-gated by the server).
+  if (u.includes("/plugins/signalk-status-tiles/examples")) {
+    if (opts?.method === "PUT") {
+      server.putBodies.push(opts.body ? JSON.parse(opts.body) : null);
+      const r = server.examplesPut ?? {
+        ok: true,
+        status: 200,
+        body: {
+          added: { contexts: [], tiles: [] },
+          skipped: { contexts: [], tiles: [] },
+        },
+      };
+      return { ok: r.ok, status: r.status, json: async () => r.body };
+    }
+    const p = server.adminProbe ?? { ok: true, status: 200 };
+    return { ok: p.ok, status: p.status, json: async () => ({ ok: true }) };
+  }
+  // Resources API (aggregated example sets).
+  if (u.includes("/resources/statusTileExamples")) {
+    return { ok: true, json: async () => server.examplesCollection ?? {} };
+  }
+  // Config endpoint.
   if (server.statusCode !== 200) {
     return { ok: false, status: server.statusCode };
   }
@@ -463,4 +510,202 @@ test("config fetch retries through a 503 plugin restart window", async () => {
 
   assert.ok(renderedChildren(el) === 2, "loaded after retries");
   el.disconnectedCallback();
+});
+
+// --- Example tile sets (doc/example-tiles-plan.md) --------------------
+
+/**
+ * Resets the mutable server state for an examples test: config serves
+ * a clean CONFIG_A, admin probe returns 200, and the examples
+ * collection / PUT responses are cleared (tests set them as needed).
+ */
+function resetExamplesServer() {
+  FakeWebSocket.sockets = [];
+  server.statusCode = 200;
+  server.configBody = { config: CONFIG_A, configHash: "hash-a" };
+  server.adminProbe = null;
+  server.examplesCollection = null;
+  server.examplesPut = null;
+  server.putBodies = [];
+}
+
+/** A small example set returned by a fake resource provider. */
+const EXAMPLE_SET = {
+  id: "energy-outlook",
+  name: "Energy outlook",
+  description: "Surplus window tiles",
+  contexts: [
+    {
+      id: "energySurplusWindow",
+      predicate: { between: { from: "a", to: "b" } },
+    },
+  ],
+  tiles: [
+    { id: "energySurplus", checks: [{ type: "notification", path: "n" }] },
+  ],
+};
+
+test("admin probe enables the chrome-bar + button", async () => {
+  resetExamplesServer();
+  server.adminProbe = { ok: true, status: 200 };
+  const el = mount();
+  await el.connectedCallback();
+  await flush();
+  assert.equal(
+    el.gridEl.addBtn.style.display,
+    "",
+    "+ visible after admin probe",
+  );
+  el.disconnectedCallback();
+});
+
+test("non-admin (403) hides the + button", async () => {
+  resetExamplesServer();
+  server.adminProbe = { ok: false, status: 403 };
+  const el = mount();
+  await el.connectedCallback();
+  await flush();
+  assert.equal(
+    el.gridEl.addBtn.style.display,
+    "none",
+    "+ hidden for read-only",
+  );
+  el.disconnectedCallback();
+});
+
+test("openExamples renders set cards from the resources API", async () => {
+  resetExamplesServer();
+  server.examplesCollection = {
+    "signalk-energy-predictor": { sets: [EXAMPLE_SET] },
+  };
+  const el = mount();
+  await el.connectedCallback();
+  await flush();
+
+  // Simulate the user clicking the "+" button.
+  el.gridEl.dispatchEvent(
+    new CustomEvent("st-examples-open", { bubbles: true }),
+  );
+  await flush();
+
+  // Overlay visible with one set card.
+  assert.equal(el.gridEl.examplesOverlay.style.display, "", "overlay open");
+  const cards = el.gridEl.examplesList.children;
+  assert.equal(cards.length, 1, "one set card");
+  assert.equal(cards[0].children[0].textContent, "Energy outlook");
+  // Add button enabled (not already added).
+  const btn = cards[0].children[3];
+  assert.equal(btn.textContent, "Add");
+  assert.equal(btn.disabled, false);
+  el.disconnectedCallback();
+});
+
+test("already-added sets are badged and disabled", async () => {
+  resetExamplesServer();
+  // Config already contains the set's tile id → fully added.
+  server.configBody = {
+    config: {
+      contexts: [],
+      tiles: [
+        { id: "energySurplus", checks: [{ type: "notification", path: "n" }] },
+      ],
+    },
+    configHash: "hash-x",
+  };
+  server.examplesCollection = { p: { sets: [EXAMPLE_SET] } };
+  const el = mount();
+  await el.connectedCallback();
+  await flush();
+
+  el.gridEl.dispatchEvent(
+    new CustomEvent("st-examples-open", { bubbles: true }),
+  );
+  await flush();
+
+  const btn = el.gridEl.examplesList.children[0].children[3];
+  assert.equal(btn.textContent, "Already added");
+  assert.equal(btn.disabled, true);
+  el.disconnectedCallback();
+});
+
+test("addExample PUTs the set and closes the overlay", async () => {
+  resetExamplesServer();
+  server.examplesCollection = { p: { sets: [EXAMPLE_SET] } };
+  const el = mount();
+  await el.connectedCallback();
+  await flush();
+
+  // Open the overlay.
+  el.gridEl.dispatchEvent(
+    new CustomEvent("st-examples-open", { bubbles: true }),
+  );
+  await flush();
+
+  // Click "Add".
+  el.gridEl.dispatchEvent(
+    new CustomEvent("st-examples-add", {
+      bubbles: true,
+      detail: { set: EXAMPLE_SET },
+    }),
+  );
+  await flush();
+
+  // PUT sent with the set's tiles/contexts.
+  assert.equal(server.putBodies.length, 1, "one PUT sent");
+  assert.deepEqual(server.putBodies[0], {
+    tiles: EXAMPLE_SET.tiles,
+    contexts: EXAMPLE_SET.contexts,
+  });
+  // Overlay closed on success.
+  assert.equal(
+    el.gridEl.examplesOverlay.style.display,
+    "none",
+    "overlay closed",
+  );
+  el.disconnectedCallback();
+});
+
+test("addExample surfaces 400 errors in the overlay", async () => {
+  resetExamplesServer();
+  server.examplesCollection = { p: { sets: [EXAMPLE_SET] } };
+  server.examplesPut = {
+    ok: false,
+    status: 400,
+    body: { message: "Merged config is invalid", errors: ["bad check"] },
+  };
+  const el = mount();
+  await el.connectedCallback();
+  await flush();
+
+  el.gridEl.dispatchEvent(
+    new CustomEvent("st-examples-open", { bubbles: true }),
+  );
+  await flush();
+
+  el.gridEl.dispatchEvent(
+    new CustomEvent("st-examples-add", {
+      bubbles: true,
+      detail: { set: EXAMPLE_SET },
+    }),
+  );
+  await flush();
+
+  // Overlay stays open; error shown.
+  assert.equal(
+    el.gridEl.examplesOverlay.style.display,
+    "",
+    "overlay stays open on 400",
+  );
+  assert.match(el.gridEl.examplesErrorEl.textContent, /invalid/i);
+  assert.match(el.gridEl.examplesErrorEl.textContent, /bad check/);
+  el.disconnectedCallback();
+});
+
+test("closeExamples hides the overlay", () => {
+  resetExamplesServer();
+  const grid = new (elementClasses.get("st-tile-grid"))();
+  grid.openExamples({ sets: [], alreadyAdded: new Set() });
+  assert.equal(grid.examplesOverlay.style.display, "", "overlay open");
+  grid.closeExamples();
+  assert.equal(grid.examplesOverlay.style.display, "none", "overlay closed");
 });

@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Example tile sets from other plugins: any Signal K plugin can ship
+  ready-made example tiles by registering a read-only
+  `statusTileExamples` resource provider. Boat owners copy a set into
+  their active panel from the webapp via a new chrome-bar "+" button
+  (admin-only — the resources API can't distinguish admin from
+  read-only, so the affordance itself is gated by an admin probe).
+  Copying merges the set's tiles and contexts into the stored config,
+  skipping (never overwriting) any whose id already exists —
+  re-adding is idempotent, and a user's edits are never clobbered.
+  The merged config is validated before persisting; a conflict surfaces
+  the errors in the overlay. This plugin ships its own dogfood set
+  (energy-predictor tiles from SPEC §7.1) via the same mechanism.
+
 ## [0.5.3] - 2026-08-27
 
 ### Fixed

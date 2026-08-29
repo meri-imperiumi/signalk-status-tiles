@@ -1,0 +1,66 @@
+{
+  "name": "Status Tiles starter examples",
+  "description": "Example tile sets shipped with signalk-status-tiles itself (dogfood). Each references paths published by signalk-energy-predictor (SPEC §7.1); without that plugin installed the tiles simply show stale/neutral until its data arrives.",
+  "sets": [
+    {
+      "id": "energy-outlook",
+      "name": "Energy outlook",
+      "description": "Surplus window tiles for signalk-energy-predictor (SPEC §7.1)",
+      "contexts": [
+        {
+          "id": "energySurplusWindow",
+          "label": "Energy surplus window",
+          "predicate": {
+            "between": {
+              "from": "electrical.energy.prediction.surplus.from",
+              "to": "electrical.energy.prediction.surplus.to"
+            }
+          }
+        }
+      ],
+      "tiles": [
+        {
+          "id": "energySurplus",
+          "label": "Energy outlook",
+          "context": "energySurplusWindow",
+          "checks": [
+            {
+              "type": "notification",
+              "path": "notifications.electrical.energy.surplus",
+              "severityMap": {
+                "normal": "green",
+                "alert": "green",
+                "warn": "opportunity",
+                "alarm": "amber",
+                "emergency": "red"
+              }
+            }
+          ]
+        },
+        {
+          "id": "engineRun",
+          "label": "Engine run",
+          "checks": [
+            {
+              "type": "notification",
+              "path": "notifications.electrical.energy.engine_run"
+            }
+          ]
+        },
+        {
+          "id": "deployAdvice",
+          "label": "Deploy advice",
+          "checks": [
+            {
+              "type": "agreement",
+              "path": "deployment.flinsail.detectedState",
+              "path2": "deployment.flinsail.recommendedState",
+              "mismatchState": "opportunity",
+              "display": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
