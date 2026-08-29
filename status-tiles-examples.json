@@ -1,62 +1,275 @@
 {
   "name": "Status Tiles starter examples",
-  "description": "Example tile sets shipped with signalk-status-tiles itself (dogfood). Each references paths published by signalk-energy-predictor (SPEC §7.1); without that plugin installed the tiles simply show stale/neutral until its data arrives.",
+  "description": "Example tile sets shipped with signalk-status-tiles itself (dogfood). The energy-outlook set is copied verbatim from a live signalk-energy-predictor installation (SPEC §7.1) — the overall-outlook, FLINsail, Superwind, hydrogenerator, and wind-protection tiles. Without that plugin installed the tiles simply show stale/neutral until its data arrives.",
   "sets": [
     {
       "id": "energy-outlook",
       "name": "Energy outlook",
-      "description": "Surplus window tiles for signalk-energy-predictor (SPEC §7.1)",
+      "description": "Energy-predictor tiles copied verbatim from a live installation (SPEC §7.1): overall outlook (stateMatch), FLINsail/Superwind/hydrogenerator deploy advice (agreement, nav-state gated), and wind protection (banded).",
       "contexts": [
         {
-          "id": "energySurplusWindow",
-          "label": "Energy surplus window",
+          "id": "anchored",
+          "label": "Anchored",
           "predicate": {
-            "between": {
-              "from": "electrical.energy.prediction.surplus.from",
-              "to": "electrical.energy.prediction.surplus.to"
+            "path": "navigation.state",
+            "compare": "equals",
+            "value": "anchored",
+            "whenMissing": "false",
+            "allOf": [],
+            "anyOf": [],
+            "not": {
+              "whenMissing": "false"
+            }
+          }
+        },
+        {
+          "id": "sailing",
+          "label": "Sailing",
+          "predicate": {
+            "path": "navigation.state",
+            "compare": "equals",
+            "value": "sailing",
+            "whenMissing": "false",
+            "allOf": [],
+            "anyOf": [],
+            "not": {
+              "whenMissing": "false"
+            }
+          }
+        },
+        {
+          "id": "at-rest",
+          "label": "At rest",
+          "predicate": {
+            "path": "navigation.state",
+            "compare": "equals",
+            "value": "moored",
+            "whenMissing": "false",
+            "allOf": [],
+            "anyOf": [
+              {
+                "path": "navigation.state",
+                "compare": "equals",
+                "value": "anchored",
+                "whenMissing": "false"
+              }
+            ],
+            "not": {
+              "whenMissing": "false"
             }
           }
         }
       ],
       "tiles": [
         {
-          "id": "energySurplus",
-          "label": "Energy outlook",
-          "context": "energySurplusWindow",
+          "id": "energy",
+          "label": "Energy",
+          "active": {
+            "whenMissing": "false",
+            "allOf": [],
+            "anyOf": [],
+            "not": {
+              "whenMissing": "false"
+            }
+          },
+          "size": "1x1",
           "checks": [
             {
-              "type": "notification",
-              "path": "notifications.electrical.energy.surplus",
-              "severityMap": {
-                "normal": "green",
-                "alert": "green",
-                "warn": "opportunity",
-                "alarm": "amber",
-                "emergency": "red"
-              }
+              "type": "stateMatch",
+              "path": "electrical.energy.prediction.status",
+              "map": [
+                {
+                  "value": "surplus",
+                  "state": "opportunity"
+                },
+                {
+                  "value": "deficit",
+                  "state": "amber"
+                },
+                {
+                  "value": "critical",
+                  "state": "red"
+                },
+                {
+                  "value": "rising",
+                  "state": "green"
+                },
+                {
+                  "value": "stable",
+                  "state": "green"
+                }
+              ],
+              "default": "neutral",
+              "display": true,
+              "staleState": "neutral",
+              "staleMs": 0
+            }
+          ],
+          "displayParts": [
+            {
+              "path": "electrical.batteries.house.capacity.stateOfCharge"
+            }
+          ],
+          "footer": [
+            {
+              "label": "Valid",
+              "path": "electrical.energy.prediction.weather.validHours"
+            },
+            {
+              "label": "Source",
+              "path": "electrical.energy.prediction.weather.source"
             }
           ]
         },
         {
-          "id": "engineRun",
-          "label": "Engine run",
-          "checks": [
-            {
-              "type": "notification",
-              "path": "notifications.electrical.energy.engine_run"
+          "id": "flinsail",
+          "label": "FLINsail",
+          "context": "at-rest",
+          "active": {
+            "whenMissing": "false",
+            "allOf": [],
+            "anyOf": [],
+            "not": {
+              "whenMissing": "false"
             }
-          ]
-        },
-        {
-          "id": "deployAdvice",
-          "label": "Deploy advice",
+          },
+          "size": "1x1",
           "checks": [
             {
               "type": "agreement",
-              "path": "deployment.flinsail.detectedState",
-              "path2": "deployment.flinsail.recommendedState",
-              "mismatchState": "opportunity",
-              "display": true
+              "path": "electrical.energy.prediction.deployment.flinsail.detectedState",
+              "path2": "electrical.energy.prediction.deployment.flinsail.recommendedState",
+              "mismatchState": "amber",
+              "display": true,
+              "staleState": "neutral",
+              "staleMs": 0
+            }
+          ],
+          "displayParts": [
+            {
+              "path": "electrical.energy.prediction.deployment.flinsail.recommendedSide"
+            }
+          ],
+          "footer": [
+            {
+              "label": "Mode",
+              "path": "electrical.solar.flinsail.controllerMode"
+            },
+            {
+              "label": "Power",
+              "path": "electrical.solar.flinsail.panelPower"
+            }
+          ]
+        },
+        {
+          "id": "superwind",
+          "label": "Superwind",
+          "context": "anchored",
+          "active": {
+            "whenMissing": "false",
+            "allOf": [],
+            "anyOf": [],
+            "not": {
+              "whenMissing": "false"
+            }
+          },
+          "size": "1x1",
+          "checks": [
+            {
+              "type": "agreement",
+              "path": "electrical.energy.prediction.deployment.superwind.recommendedState",
+              "path2": "electrical.energy.prediction.deployment.superwind.detectedState",
+              "mismatchState": "amber",
+              "display": true,
+              "staleState": "neutral",
+              "staleMs": 0
+            }
+          ],
+          "displayParts": [],
+          "footer": [
+            {
+              "label": "Power",
+              "path": "electrical.chargers.wind.power"
+            }
+          ]
+        },
+        {
+          "id": "hydrogenerator",
+          "label": "Hydrogenerator",
+          "context": "sailing",
+          "active": {
+            "whenMissing": "false",
+            "allOf": [],
+            "anyOf": [],
+            "not": {
+              "whenMissing": "false"
+            }
+          },
+          "size": "1x1",
+          "checks": [
+            {
+              "type": "agreement",
+              "path": "electrical.energy.prediction.deployment.sailinggen.recommendedState",
+              "path2": "electrical.energy.prediction.deployment.superwind.detectedState",
+              "mismatchState": "amber",
+              "display": true,
+              "staleState": "neutral",
+              "staleMs": 0
+            }
+          ],
+          "displayParts": [],
+          "footer": [
+            {
+              "label": "Power",
+              "path": "electrical.chargers.hydrogenerator.power"
+            }
+          ]
+        },
+        {
+          "id": "wind",
+          "label": "Wind forecast",
+          "active": {
+            "whenMissing": "false",
+            "allOf": [],
+            "anyOf": [],
+            "not": {
+              "whenMissing": "false"
+            }
+          },
+          "size": "1x1",
+          "checks": [
+            {
+              "type": "banded",
+              "path": "electrical.energy.prediction.windProtection.correctedSpeed",
+              "low": {
+                "warnState": "amber",
+                "critState": "red"
+              },
+              "high": {
+                "warn": 10,
+                "crit": 20,
+                "warnState": "amber",
+                "critState": "red"
+              },
+              "unit": "",
+              "display": true,
+              "staleState": "neutral",
+              "staleMs": 0
+            }
+          ],
+          "displayParts": [],
+          "footer": [
+            {
+              "label": "Current",
+              "path": "environment.wind.speedOverGround"
+            },
+            {
+              "label": "Gusts",
+              "path": "electrical.energy.prediction.windProtection.correctedGust"
+            },
+            {
+              "label": "WPF",
+              "path": "electrical.energy.prediction.windProtection.speedFactor"
             }
           ]
         }

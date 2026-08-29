@@ -25,6 +25,7 @@ import {
 } from "./lib/mode.js";
 import { collectPaths, unwrapConfig } from "./lib/paths.js";
 import { previewTiles } from "./lib/preview.js";
+import { PathCache } from "./lib/staleness.js";
 import { fetchVesselName } from "./lib/vessel.js";
 import { SignalKStream } from "./st-stream.js";
 import "./st-tile-grid.js";
@@ -84,8 +85,15 @@ class StApp extends HTMLElement {
     this.timer = null;
     /** Durable across engine rebuilds (SPEC §10). */
     this.anomalyLog = new AnomalyLog(safeLocalStorage());
-    /** @type {boolean} reload guard: one re-fetch in flight at a time */
+    /** @type {number|null} reload guard: one re-fetch in flight at a time */
     this.reloading = false;
+    /** Preview cache for the examples picker: while the picker is open,
+     * the stream subscription is extended with the example sets' paths
+     * and their deltas are fed here, so previews render real data. */
+    this.previewCache = null;
+    /** Flattened example sets while the picker is open (for re-render
+     * on each preview delta). @type {Array|null} */
+    this.exampleSets = null;
     this.attachShadow({ mode: "open" });
     const grid = document.createElement("st-tile-grid");
     this.shadowRoot.append(grid);
@@ -176,6 +184,28 @@ class StApp extends HTMLElement {
         } catch (err) {
           fail("evaluating delta", err);
         }
+        // Examples picker open: feed the same real delta into the
+        // preview cache and re-render the previews — the picker shows
+        // live data while it is open (rare admin action; a few tiles).
+        if (this.previewCache && this.exampleSets) {
+          try {
+            const now = Date.now();
+            for (const u of delta?.updates || []) {
+              for (const v of u.values || [])
+                this.previewCache.set(v.path, v.value, now);
+              for (const m of u.meta || [])
+                this.previewCache.setMeta(m.path, m.value);
+            }
+            this.gridEl.updateExamplesPreviews(
+              this.exampleSets.map((entry) => ({
+                ...entry,
+                preview: previewTiles(entry.set, this.previewCache),
+              })),
+            );
+          } catch (err) {
+            fail("updating previews", err);
+          }
+        }
       },
       {
         onStatus: (s) => {
@@ -246,6 +276,9 @@ class StApp extends HTMLElement {
       this.gridEl.addEventListener("st-examples-add", (e) =>
         this.#addExample(e.detail.set),
       );
+      this.gridEl.addEventListener("st-examples-close", () =>
+        this.#stopPreviewStream(),
+      );
     } catch {
       // Non-admin or offline: the "+" stays hidden.
     }
@@ -266,20 +299,45 @@ class StApp extends HTMLElement {
       const collection = await res.json();
       const flat = flattenExamplesCollection(collection);
       const alreadyAdded = fullyAddedSetIds(flat, this.config);
-      // Render each set's tiles through the real evaluator against
-      // synthesized sample data so the preview shows actual states and
-      // values, not grey placeholders (public/lib/preview.js).
-      const withPreviews = flat.map((entry) => ({
-        ...entry,
-        preview: previewTiles(entry.set),
-      }));
-      this.gridEl.openExamples({ sets: withPreviews, alreadyAdded });
+      // Real-data previews: extend the stream subscription with the
+      // example sets' paths (checks, contexts, footers, displayParts —
+      // collectPaths handles the config-shaped set) and feed their
+      // deltas into a preview cache. Tiles render through the real
+      // evaluator against that cache (public/lib/preview.js): real
+      // states/values from the boat, formatted with real meta; paths
+      // the boat doesn't publish stay honestly stale/neutral. Until
+      // the first deltas land the previews show the no-data-yet look.
+      this.previewCache = new PathCache();
+      this.exampleSets = flat;
+      const examplePaths = flat.flatMap((entry) => collectPaths(entry.set));
+      this.stream?.setPaths([
+        ...new Set([...this.#watchedPaths(), ...examplePaths]),
+      ]);
+      this.gridEl.openExamples({
+        sets: flat.map((entry) => ({
+          ...entry,
+          preview: previewTiles(entry.set, this.previewCache),
+        })),
+        alreadyAdded,
+      });
     } catch (err) {
       this.gridEl.examplesError = `Failed to load: ${err.message}`;
       this.gridEl.openExamples({ sets: [], alreadyAdded: new Set() });
+      this.#stopPreviewStream();
     } finally {
       this.gridEl.examplesBusy = false;
     }
+  }
+
+  /**
+   * Ends the real-data preview session: drops the preview cache and
+   * restores the stream subscription to the config's watched paths
+   * (picker closed, copied, or failed to load).
+   */
+  #stopPreviewStream() {
+    this.previewCache = null;
+    this.exampleSets = null;
+    this.stream?.setPaths(this.#watchedPaths());
   }
 
   /**

@@ -15,9 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (admin-only — the resources API can't distinguish admin from
   read-only, so the affordance itself is gated by an admin probe).
   The picker renders each set's tiles through the real evaluator
-  against synthesized healthy sample data, so each preview shows its
-  actual state/color and headline value rather than a grey placeholder.
-  Copying merges the set's tiles and contexts into the stored config,
+  against the boat's LIVE data: while the picker is open the webapp
+  extends its stream subscription with the sets' paths and feeds their
+  deltas into a preview cache, so each preview shows real states,
+  values, and units; paths the boat doesn't publish stay honestly
+  stale/neutral. Copying merges the set's tiles and contexts into the
+  stored config,
   skipping (never overwriting) any whose id already exists —
   re-adding is idempotent, and a user's edits are never clobbered.
   The merged config is validated before persisting; a conflict surfaces

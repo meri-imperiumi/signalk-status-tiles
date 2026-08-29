@@ -603,42 +603,39 @@ test("openExamples renders set cards from the resources API", async () => {
   const el = mount();
   await el.connectedCallback();
   await flush();
+  const socket = FakeWebSocket.sockets.at(-1);
 
   // Simulate the user clicking the "+" button.
   el.gridEl.dispatchEvent(
     new CustomEvent("st-examples-open", { bubbles: true }),
   );
   await flush();
+  // setPaths reconnects via a setTimeout(0) — let timers run.
+  await new Promise((r) => setTimeout(r, 5));
 
   // Overlay visible with one set card.
   assert.equal(el.gridEl.examplesOverlay.style.display, "", "overlay open");
   const cards = el.gridEl.examplesList.children;
   assert.equal(cards.length, 1, "one set card");
   assert.equal(cards[0].children[0].textContent, "Energy outlook");
-  // Per-set tile preview rendered through the real evaluator against
-  // synthesized sample data (public/lib/preview.js): a notification
-  // check evaluates green (healthy), with the real label. The check
-  // isn't `display`, so the headline slot is hidden (no value) — honest,
-  // matching how a green notification tile looks in the live grid, not
-  // a grey "—" placeholder. Footer labels render with "—" values (no
-  // sample data for footer paths), and a muted caption names the check
-  // type + watched path.
+  // Real-data previews (public/lib/preview.js): tiles render through
+  // the real evaluator against the boat's live cache. Before the first
+  // delta lands, the notification check is honestly stale → neutral,
+  // no headline (the check isn't `display`), footer "—" (unfed), and a
+  // muted caption naming the check type + watched path. No fabricated
+  // healthy state.
   const preview = cards[0].children[3];
   assert.equal(preview.className, "examples-preview", "preview container");
   const wrap = preview.children[0];
   assert.equal(wrap.className, "examples-tile-wrap");
   const tileEl = wrap.children[0];
-  assert.equal(
-    tileEl.className,
-    "tile theme-green lit",
-    "preview tile is green",
-  );
+  assert.equal(tileEl.className, "tile neutral", "no data yet → neutral");
   assert.equal(
     tileEl.children[0].textContent,
     "Energy surplus",
     "label rendered",
   );
-  // No display check → no headline value; the slot is hidden, not a "—".
+  // No display check → no headline value; the slot is hidden.
   assert.equal(tileEl.children[1].textContent, "", "no headline value");
   assert.equal(tileEl.children[1].style.display, "none", "value slot hidden");
   const footer = tileEl.children[3];
@@ -647,7 +644,7 @@ test("openExamples renders set cards from the resources API", async () => {
   assert.equal(
     footer.children[0].children[1].textContent,
     "—",
-    "footer value is — (no sample data for footer paths)",
+    "footer value is — (path unfed so far)",
   );
   const caption = wrap.children[1];
   assert.equal(caption.className, "examples-checks");
@@ -656,6 +653,65 @@ test("openExamples renders set cards from the resources API", async () => {
   const btn = addBtn(cards[0]);
   assert.equal(btn.textContent, "Add");
   assert.equal(btn.disabled, false);
+
+  // The picker extends the stream subscription with the sets' paths:
+  // setPaths reconnected the socket; the new socket's subscribe list
+  // includes the example tile's paths (check + footer).
+  const pickSocket = FakeWebSocket.sockets.at(-1);
+  assert.notEqual(pickSocket, socket, "picker re-subscribed the stream");
+  pickSocket.serverOpen();
+  await flush();
+  const pickPaths = subscribePaths(pickSocket);
+  assert.ok(
+    pickPaths.includes("notifications.electrical.energy.surplus"),
+    "example check path subscribed",
+  );
+  assert.ok(
+    pickPaths.includes("electrical.energy.prediction.surplus.from"),
+    "example footer path subscribed",
+  );
+
+  // A real delta for the check path arrives → the preview re-renders
+  // with the REAL data: a normal notification evaluates green.
+  pickSocket.serverMessage(
+    JSON.stringify({
+      context: "vessels.self",
+      updates: [
+        {
+          values: [
+            {
+              path: "notifications.electrical.energy.surplus",
+              value: { state: "normal", message: "all good" },
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  await flush();
+  // replaceChildren rebuilt the wrap in place — re-query the tile.
+  const tile2 = preview.children[0].children[0];
+  assert.equal(
+    tile2.className,
+    "tile theme-green lit",
+    "real delta → real evaluated state",
+  );
+  assert.equal(tile2.children[0].textContent, "Energy surplus");
+  assert.equal(el.gridEl.errorEl.textContent, "", "no eval error");
+
+  // Closing the picker restores the config-only subscription.
+  el.gridEl.closeExamples();
+  await flush();
+  await new Promise((r) => setTimeout(r, 5));
+  const restoreSocket = FakeWebSocket.sockets.at(-1);
+  assert.notEqual(restoreSocket, pickSocket, "close re-subscribed back");
+  restoreSocket.serverOpen();
+  await flush();
+  const restorePaths = subscribePaths(restoreSocket);
+  assert.ok(
+    !restorePaths.includes("notifications.electrical.energy.surplus"),
+    "example path unsubscribed on close",
+  );
   el.disconnectedCallback();
 });
 

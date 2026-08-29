@@ -1,285 +1,329 @@
 /**
  * Preview rendering for example tile sets (public/lib/preview.js): the
- * picker renders each set's tiles through the real evaluator against
- * synthesized healthy sample data, so a preview shows actual state/color
- * and headline values rather than grey placeholders.
+ * picker renders each set's tiles through the real evaluator against a
+ * LIVE cache fed by the app's stream — real states/values from the
+ * boat, never synthesized ones. Paths absent from the cache render the
+ * tile's stale state (honest "no data on this boat yet").
  *
  * @file preview.test.js */
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { previewTiles, sampleValuesForCheck } from "../public/lib/preview.js";
+import { previewTiles } from "../public/lib/preview.js";
+import { PathCache } from "../public/lib/staleness.js";
 
 /** A one-tile set wrapping the given tile config. */
 function setWith(tile) {
   return { id: "s", name: "S", tiles: [tile] };
 }
 
-test("a notification check previews green with no headline (no display)", () => {
-  // Notification checks never produce a displayValue, so a healthy
-  // (normal) notification previews as a green status tile with no
-  // headline — exactly how it looks in the live grid, not a grey "—".
+/** Feeds `samples` (`{path: value}`) and `meta` into a fresh cache. */
+function cacheWith(samples = {}, meta = {}, now = Date.now()) {
+  const c = new PathCache();
+  for (const [p, v] of Object.entries(samples)) c.set(p, v, now);
+  for (const [p, m] of Object.entries(meta)) c.setMeta(p, m);
+  return c;
+}
+
+test("a stateMatch previews with the boat's REAL current value", () => {
+  // The live cache holds the actual status word the plugin published —
+  // whatever it is, that's the headline. No invented values.
+  const c = cacheWith({ "electrical.energy.prediction.status": "surplus" });
+  const [t] = previewTiles(
+    setWith({
+      id: "energy",
+      label: "Energy",
+      checks: [
+        {
+          type: "stateMatch",
+          path: "electrical.energy.prediction.status",
+          map: [
+            { value: "surplus", state: "opportunity" },
+            { value: "deficit", state: "amber" },
+            { value: "rising", state: "green" },
+          ],
+          default: "neutral",
+          display: true,
+        },
+      ],
+    }),
+    c,
+  );
+  assert.equal(t.state, "opportunity", "the real value's mapped state");
+  assert.equal(t.displayValue, "surplus", "the real value is the headline");
+});
+
+test("an agreement previews the boat's REAL agreement state", () => {
+  // Real detected vs recommended: mismatch → the configured mismatch
+  // state, with the real states in the reason. Not a fabricated "ok".
+  const c = cacheWith({
+    "d.flinsail.detectedState": "stowed",
+    "d.flinsail.recommendedState": "deployed",
+  });
+  const [t] = previewTiles(
+    setWith({
+      id: "flinsail",
+      label: "FLINsail",
+      checks: [
+        {
+          type: "agreement",
+          path: "d.flinsail.detectedState",
+          path2: "d.flinsail.recommendedState",
+          mismatchState: "amber",
+          display: true,
+        },
+      ],
+    }),
+    c,
+  );
+  assert.equal(t.state, "amber", "real mismatch → real mismatch state");
+  assert.match(t.reason, /detectedState/);
+  assert.equal(t.displayValue, "stowed", "real detected value as headline");
+
+  // And when they really agree: green, no fabrication needed.
+  const c2 = cacheWith({
+    "d.flinsail.detectedState": "deployed",
+    "d.flinsail.recommendedState": "deployed",
+  });
+  const [t2] = previewTiles(
+    setWith({
+      id: "flinsail",
+      label: "FLINsail",
+      checks: [
+        {
+          type: "agreement",
+          path: "d.flinsail.detectedState",
+          path2: "d.flinsail.recommendedState",
+          display: true,
+        },
+      ],
+    }),
+    c2,
+  );
+  assert.equal(t2.state, "green");
+  assert.equal(t2.displayValue, "deployed");
+});
+
+test("a banded check previews the boat's REAL value, meta-formatted", () => {
+  // Real wind speed from the cache, formatted with the path's real
+  // displayUnits meta (same formatting as the live grid).
+  const c = cacheWith(
+    { "wp.correctedSpeed": 12.4 },
+    { "wp.correctedSpeed": { displayUnits: { symbol: "m/s" } } },
+  );
+  const [t] = previewTiles(
+    setWith({
+      id: "wind",
+      label: "Wind forecast",
+      checks: [
+        {
+          type: "banded",
+          path: "wp.correctedSpeed",
+          high: { warn: 10, crit: 20 },
+          display: true,
+        },
+      ],
+    }),
+    c,
+  );
+  assert.equal(t.state, "amber", "12.4 > warn 10 — the real band");
+  assert.equal(t.displayValue, "12.4 m/s", "real value with real unit");
+});
+
+test("a notification previews from the boat's REAL notification", () => {
+  const c = cacheWith({
+    "n.surplus": { state: "warn", message: "1.3kWh surplus available" },
+  });
   const [t] = previewTiles(
     setWith({
       id: "n",
       label: "Surplus",
-      checks: [{ type: "notification", path: "notifications.x.surplus" }],
-    }),
-  );
-  assert.equal(t.state, "green");
-  assert.equal(t.label, "Surplus");
-  assert.equal(t.displayValue, undefined, "no headline value");
-});
-
-test("a banded display check previews green with a formatted value", () => {
-  // A ratio/percent banded check: sample 0.85 is within the healthy
-  // band and formats to "85%" — the preview shows a real headline.
-  const [t] = previewTiles(
-    setWith({
-      id: "soc",
-      label: "Battery",
       checks: [
         {
-          type: "banded",
-          path: "electrical.batteries.0.capacity.stateOfCharge",
-          low: { warn: 0.5, warnState: "amber" },
-          unit: "%",
-          display: true,
+          type: "notification",
+          path: "n.surplus",
+          severityMap: { normal: "green", warn: "opportunity" },
         },
       ],
     }),
+    c,
   );
-  assert.equal(t.state, "green", "0.85 is above the low.warn threshold");
-  assert.equal(t.displayValue, "85%");
+  assert.equal(t.state, "opportunity", "the real severity, mapped");
 });
 
-test("a banded value lands in the healthy band between two thresholds", () => {
-  // Non-percent banded with both sides bounded: the sample is the
-  // midpoint of [low.warn, high.warn], comfortably green.
+test("a path the boat doesn't publish previews honestly stale/neutral", () => {
+  // The core honesty contract: no data in the cache → the tile's stale
+  // state (neutral by default), never an invented healthy value.
   const [t] = previewTiles(
     setWith({
-      id: "v",
-      label: "Voltage",
-      checks: [
-        {
-          type: "banded",
-          path: "electrical.batteries.0.voltage",
-          low: { warn: 11.5 },
-          high: { warn: 14.5 },
-          display: true,
-        },
-      ],
-    }),
-  );
-  assert.equal(t.state, "green");
-  // midpoint of 11.5 and 14.5 = 13; formatted as a bare number.
-  assert.equal(t.displayValue, "13.0");
-});
-
-test("an agreement display check previews green with the matched value", () => {
-  // Both paths fed the same sample value → match → green; the `display`
-  // check surfaces that value as the headline.
-  const [t] = previewTiles(
-    setWith({
-      id: "deploy",
-      label: "Deploy",
-      checks: [
-        {
-          type: "agreement",
-          path: "deployment.x.detectedState",
-          path2: "deployment.x.recommendedState",
-          display: true,
-        },
-      ],
-    }),
-  );
-  assert.equal(t.state, "green");
-  assert.equal(t.displayValue, "ok");
-});
-
-test("a boolean check previews green (feeds the OK value)", () => {
-  // badWhen defaults true (true is bad) → sample false → green.
-  const [t] = previewTiles(
-    setWith({
-      id: "b",
-      label: "Bilge",
-      checks: [{ type: "boolean", path: "bilge.high" }],
-    }),
-  );
-  assert.equal(t.state, "green");
-  // boolean checks only display when `display` is set; here it isn't.
-  assert.equal(t.displayValue, undefined);
-
-  // badWhen:false (false is bad) → sample true → green.
-  const [t2] = previewTiles(
-    setWith({
-      id: "eng",
-      label: "Engine",
-      checks: [{ type: "boolean", path: "engine.on", badWhen: false }],
-    }),
-  );
-  assert.equal(t2.state, "green");
-});
-
-test("a stateMatch previews green when the map defines a green value", () => {
-  const [t] = previewTiles(
-    setWith({
-      id: "sm",
-      label: "Mode",
+      id: "energy",
+      label: "Energy",
       checks: [
         {
           type: "stateMatch",
-          path: "navigation.state",
-          map: [
-            { value: "anchored", state: "green" },
-            { value: "sailing", state: "amber" },
-          ],
+          path: "electrical.energy.prediction.status",
+          map: [{ value: "rising", state: "green" }],
           default: "neutral",
-        },
-      ],
-    }),
-  );
-  assert.equal(t.state, "green", "the green-mapped value is fed");
-});
-
-test("a stateMatch with no green row previews neutral (honestly)", () => {
-  // No green row → nothing fed → stale → staleState (neutral). The
-  // preview does not fabricate a green state the config can't produce.
-  const [t] = previewTiles(
-    setWith({
-      id: "sm",
-      label: "Mode",
-      checks: [
-        {
-          type: "stateMatch",
-          path: "navigation.state",
-          map: [{ value: "sailing", state: "amber" }],
-          default: "neutral",
-        },
-      ],
-    }),
-  );
-  assert.equal(t.state, "neutral");
-});
-
-test("an alarmGroup previews green (no alarms tripped)", () => {
-  const [t] = previewTiles(
-    setWith({
-      id: "ag",
-      label: "Alarms",
-      checks: [
-        {
-          type: "alarmGroup",
-          paths: ["alarms.a", "alarms.b"],
-          levelPath: "tanks.fuel.0.level",
-          levelWarn: 30,
-        },
-      ],
-    }),
-  );
-  assert.equal(t.state, "green");
-});
-
-test("a differential check previews green (equal inputs)", () => {
-  const [t] = previewTiles(
-    setWith({
-      id: "diff",
-      label: "Cell spread",
-      checks: [
-        {
-          type: "differential",
-          path: "electrical.batteries.0.cell0",
-          path2: "electrical.batteries.0.cell1",
-          warn: 0.05,
-          crit: 0.1,
-        },
-      ],
-    }),
-  );
-  assert.equal(t.state, "green", "equal inputs → diff 0 < warn");
-});
-
-test("a zone check previews green when an inline green zone exists", () => {
-  const [t] = previewTiles(
-    setWith({
-      id: "z",
-      label: "Temp",
-      checks: [
-        {
-          type: "zone",
-          path: "environment.water.temperature",
-          zones: [
-            { lower: 0, upper: 20, state: "nominal" },
-            { lower: 20, upper: 30, state: "warn" },
-          ],
-        },
-      ],
-    }),
-  );
-  assert.equal(
-    t.state,
-    "green",
-    "sample feeds the green (nominal) zone's lower bound",
-  );
-});
-
-test("footer paths are left unfed — they show '—' (add-time appearance)", () => {
-  // Footers are subordinate readouts; the preview shows their labels
-  // with "—" values (no sample data), while the headline comes from the
-  // check's sample. Honest about what the tile looks like at add time
-  // for its readouts, alive for its headline.
-  const [t] = previewTiles(
-    setWith({
-      id: "f",
-      label: "Solar",
-      checks: [
-        {
-          type: "banded",
-          path: "electrical.solar.power",
-          high: { warn: 400 },
           display: true,
         },
       ],
-      footer: [{ label: "Peak", path: "electrical.solar.peak" }],
     }),
+    cacheWith({ "some.other.path": 1 }),
   );
-  assert.equal(t.state, "green");
-  assert.equal(t.footer.length, 1);
-  assert.equal(t.footer[0].label, "Peak");
-  assert.equal(t.footer[0].value, "—", "footer path unfed → dash");
+  assert.equal(t.state, "neutral", "unfed path → stale state");
+  // evalTile normalizes a display check with no value to "—" — the
+  // same honest placeholder the live grid shows for stale tiles.
+  assert.equal(t.displayValue, "—", "no-data placeholder, not a value");
 });
 
-test("context gating is bypassed — all tiles preview regardless of context", () => {
-  // The set ships a context whose `between` predicate references paths
-  // with no sample data; a context-gated tile would be hidden. The
-  // preview shows it anyway (evalTile called directly per tile).
+test("a stale (old-timestamp) value also previews as stale, not frozen", () => {
+  // A value that arrived long ago is stale by the evaluator's own
+  // staleness clock — the preview must not show a frozen old reading.
+  const old = Date.now() - 10 * 60_000; // 10 min
+  const c = new PathCache();
+  c.set("electrical.energy.prediction.status", "rising", old);
+  const [t] = previewTiles(
+    setWith({
+      id: "energy",
+      label: "Energy",
+      checks: [
+        {
+          type: "stateMatch",
+          path: "electrical.energy.prediction.status",
+          map: [{ value: "rising", state: "green" }],
+          default: "neutral",
+          display: true,
+          staleMs: 60_000,
+        },
+      ],
+    }),
+    c,
+  );
+  assert.equal(t.state, "neutral", "stale value degrades, never freezes");
+});
+
+test("no cache at all degrades to all-neutral (honest), never throws", () => {
+  // Called before the engine/stream exist: every tile stale/neutral.
   const tiles = previewTiles({
-    contexts: [
-      {
-        id: "window",
-        predicate: {
-          between: { from: "x.from", to: "x.to" },
-        },
-      },
-    ],
     tiles: [
       {
-        id: "ctxTile",
-        label: "Gated",
-        context: "window",
-        checks: [{ type: "notification", path: "notifications.x" }],
+        id: "a",
+        label: "A",
+        checks: [{ type: "notification", path: "n" }],
+      },
+      {
+        id: "b",
+        label: "B",
+        checks: [{ type: "banded", path: "p", high: { warn: 5 } }],
       },
     ],
   });
-  assert.equal(tiles.length, 1, "the context-gated tile still previews");
-  assert.equal(tiles[0].state, "green");
+  assert.equal(tiles.length, 2);
+  for (const t of tiles) {
+    assert.equal(t.state, "neutral");
+    assert.equal(t.displayValue, undefined);
+  }
+});
+
+test("footers render real values; unfed footer paths show dash", () => {
+  const c = cacheWith({
+    "wp.correctedSpeed": 8.2,
+    "wp.correctedGust": 11.9,
+  });
+  c.setMeta("wp.correctedSpeed", { units: "m/s" });
+  const [t] = previewTiles(
+    setWith({
+      id: "wind",
+      label: "Wind",
+      checks: [
+        { type: "banded", path: "wp.correctedSpeed", high: { warn: 10 } },
+      ],
+      footer: [
+        { label: "Current", path: "wp.correctedSpeed" },
+        { label: "WPF", path: "wp.speedFactor" },
+      ],
+    }),
+    c,
+  );
+  assert.equal(t.footer[0].label, "Current");
+  assert.equal(t.footer[0].value, "8.20 m/s", "fed footer shows real data");
+  assert.equal(t.footer[1].value, "—", "unfed footer shows dash");
+});
+
+test("displayParts render real values when fed", () => {
+  const c = cacheWith({
+    "d.flinsail.detectedState": "deployed",
+    "d.flinsail.recommendedState": "deployed",
+    "d.flinsail.recommendedSide": "starboard",
+  });
+  const [t] = previewTiles(
+    setWith({
+      id: "flinsail",
+      label: "FLINsail",
+      checks: [
+        {
+          type: "agreement",
+          path: "d.flinsail.detectedState",
+          path2: "d.flinsail.recommendedState",
+          display: true,
+        },
+      ],
+      displayParts: [{ path: "d.flinsail.recommendedSide" }],
+    }),
+    c,
+  );
+  assert.equal(t.state, "green");
+  assert.equal(t.displayValue, "deployed starboard", "real composed headline");
+});
+
+test("context gating is bypassed — all tiles preview regardless of context", () => {
+  // The picker previews the set's tiles, not the boat's situation: a
+  // tile gated on a context whose predicate does NOT hold (boat is
+  // sailing, tile wants at-rest) still previews with real data.
+  const c = cacheWith({
+    "navigation.state": "sailing",
+    "d.flinsail.detectedState": "deployed",
+    "d.flinsail.recommendedState": "deployed",
+  });
+  const tiles = previewTiles(
+    {
+      contexts: [
+        {
+          id: "at-rest",
+          predicate: {
+            path: "navigation.state",
+            compare: "equals",
+            value: "moored",
+          },
+        },
+      ],
+      tiles: [
+        {
+          id: "flinsail",
+          label: "FLINsail",
+          context: "at-rest",
+          checks: [
+            {
+              type: "agreement",
+              path: "d.flinsail.detectedState",
+              path2: "d.flinsail.recommendedState",
+              display: true,
+            },
+          ],
+        },
+      ],
+    },
+    c,
+  );
+  assert.equal(tiles.length, 1, "context-gated tile still previews");
+  assert.equal(tiles[0].state, "green", "…with its real evaluated state");
 });
 
 test("a malformed tile falls back to neutral, not a thrown preview", () => {
   // One bad tile must not blank the whole set.
   const tiles = previewTiles({
     tiles: [
-      { id: "bad", label: "Bad" }, // no checks, but not malformed enough to throw
+      { id: "bad", label: "Bad" }, // no checks: renders neutral via evalTile
       {
         id: "good",
         label: "Good",
@@ -289,7 +333,7 @@ test("a malformed tile falls back to neutral, not a thrown preview", () => {
   });
   assert.equal(tiles.length, 2);
   assert.equal(tiles[0].label, "Bad");
-  assert.equal(tiles[1].state, "green");
+  assert.equal(tiles[1].state, "neutral");
 });
 
 test("an unknown context id still previews (config-error path, neutral)", () => {
@@ -307,27 +351,4 @@ test("an unknown context id still previews (config-error path, neutral)", () => 
   });
   assert.equal(t.state, "neutral");
   assert.match(t.reason, /unknown context/);
-});
-
-test("sampleValuesForCheck returns a path→value map per check type", () => {
-  // Spot-check the synthesized values for a couple of types.
-  assert.deepEqual(sampleValuesForCheck({ type: "notification", path: "n" }), {
-    n: { state: "normal", message: "ok" },
-  });
-  assert.deepEqual(sampleValuesForCheck({ type: "boolean", path: "b" }), {
-    b: false,
-  });
-  assert.deepEqual(
-    sampleValuesForCheck({ type: "boolean", path: "b", badWhen: false }),
-    { b: true },
-  );
-  assert.deepEqual(
-    sampleValuesForCheck({ type: "agreement", path: "a", path2: "b" }),
-    { a: "ok", b: "ok" },
-  );
-  // compound contributes nothing (can't be honestly satisfied).
-  assert.deepEqual(
-    sampleValuesForCheck({ type: "compound", predicate: {} }),
-    {},
-  );
 });

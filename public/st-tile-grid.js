@@ -256,13 +256,14 @@ class StTileGrid extends HTMLElement {
         cursor: default;
       }
       /* Per-set tile preview: each tile is rendered through the real
-         #buildTile/#paintTile from the evaluator's output (sample data
-         fed by public/lib/preview.js), so the user sees the actual tile
-         — label, headline value, footer labels, and a healthy state/color
-         — not an empty grey card. Compact fixed sizing; the full-grid
-         vh/vw units would be far too large in the overlay. The .tile
-         rules above still apply (brackets, theme vars); these overrides
-         only shrink them. */
+         #buildTile/#paintTile from the evaluator's output against the
+         boat's live data (stream deltas fed into a preview cache by the
+         app — public/lib/preview.js), so the user sees the actual tile
+         with real values; unfed paths show the honest stale/neutral
+         look. Compact fixed sizing; the full-grid vh/vw units would be
+         far too large in the overlay. The .tile rules above still
+         apply (brackets, theme vars); these overrides only shrink
+         them. */
       .examples-preview {
         display: flex;
         flex-wrap: wrap;
@@ -279,6 +280,14 @@ class StTileGrid extends HTMLElement {
         width: 100%;
         min-height: 11vh;
         padding: 1.2vh 1vw;
+        /* border-box is load-bearing here: the shadow DOM does NOT
+           inherit the host page's universal border-box rule (only custom
+           properties pierce the boundary), so without this the tile
+           defaults to content-box and width:100% sizes only the content
+           box — padding (1vw×2) + border (2px×2) are then added on top,
+           making the tile ~42px wider than its 17vw wrap and overlapping
+           the next wrap horizontally. */
+        box-sizing: border-box;
       }
       .examples-preview .tile .label { font-size: 1.5vh; }
       .examples-preview .tile .value { font-size: 3.5vh; }
@@ -960,9 +969,11 @@ class StTileGrid extends HTMLElement {
    * closes the overlay (a config-hash reload refreshes the grid).
    *
    * Each set entry carries `preview`: the set's tiles rendered through
-   * the real evaluator against synthesized sample data (computed by the
-   * app via public/lib/preview.js), so each preview tile shows its
-   * actual state/color and headline value rather than a grey placeholder.
+   * the real evaluator against the boat's LIVE data (the app extends
+   * its stream subscription with the sets' paths for the duration the
+   * picker is open, feeding a preview cache consumed by
+   * public/lib/preview.js) — real states, values, and formatting;
+   * paths the boat doesn't publish stay honestly stale/neutral.
    *
    * @param {{sets: Array<{source: string, set: object, preview?: Array<object>}>, alreadyAdded?: Set<string>}} opts
    */
@@ -970,8 +981,10 @@ class StTileGrid extends HTMLElement {
     this.examplesErrorEl.textContent = "";
     this.examplesBusyEl.style.display = "none";
     this._exampleButtons = [];
+    this._exampleSets = Array.isArray(sets) ? sets : [];
+    this._exampleAdded = alreadyAdded;
     this.examplesList.replaceChildren();
-    const list = Array.isArray(sets) ? sets : [];
+    const list = this._exampleSets;
     if (list.length === 0) {
       const empty = document.createElement("div");
       empty.className = "examples-subtitle";
@@ -990,10 +1003,11 @@ class StTileGrid extends HTMLElement {
       desc.className = "desc";
       desc.textContent = set.description || "";
       // Live tile previews: each tile is rendered through the real
-      // #buildTile/#paintTile from the evaluator's output (sample data
-      // fed by public/lib/preview.js via the app), so the user sees the
-      // actual tile — label, headline value, footer, and a healthy
-      // state/color — not an empty grey card.
+      // #buildTile/#paintTile from the evaluator's output (real data
+      // fed by the app's stream subscription via
+      // public/lib/preview.js), so the user sees the actual tile —
+      // label, headline value, footer — with the boat's real data,
+      // or honestly stale/neutral for paths the boat doesn't publish.
       const preview = document.createElement("div");
       preview.className = "examples-preview";
       const configTiles = Array.isArray(set.tiles) ? set.tiles : [];
@@ -1025,12 +1039,12 @@ class StTileGrid extends HTMLElement {
 
   /**
    * Builds a compact preview of one example tile: the rendered tile
-   * (the evaluator's output from synthesized sample data, supplied by
+   * (the evaluator's output against the boat's live data, supplied by
    * the app via public/lib/preview.js) is handed to the real
    * #buildTile/#paintTile, so the tile shows its actual state/color,
-   * label, headline value, and footer. A muted caption below lists the
-   * check type(s) and watched path(s) (from the config tile) so the
-   * user sees what the tile watches.
+   * label, headline value, and footer from real data. A muted caption
+   * below lists the check type(s) and watched path(s) (from the config
+   * tile) so the user sees what the tile watches.
    * @param {object} rendered - the evaluator's rendered-tile shape
    *   ({id, state, label, reason, displayValue, footer})
    * @param {object} configTile - the tile in config shape (SPEC §9),
@@ -1060,9 +1074,63 @@ class StTileGrid extends HTMLElement {
     return wrap;
   }
 
-  /** Hides the overlay (called by the app after a successful copy). */
+  /**
+   * Hides the overlay (called by its own close button, or by the app
+   * after a successful copy) and dispatches `st-examples-close` so the
+   * app can end its preview stream subscription extension.
+   */
   closeExamples() {
     this.examplesOverlay.style.display = "none";
+    this.dispatchEvent(
+      new CustomEvent("st-examples-close", { bubbles: true, composed: true }),
+    );
+  }
+
+  /**
+   * Refreshes the rendered preview tiles in place (the app calls this
+   * on each preview delta while the picker is open, so previews show
+   * live data). Structure-safe: if the set list or any set's tile
+   * count changed since openExamples (shouldn't happen — the sets are
+   * re-fetched only on open), falls back to a full re-render with the
+   * stored already-added set. Buttons, scroll, and card layout are
+   * untouched — only each tile wrap's contents are rebuilt.
+   * @param {Array<{source: string, set: object, preview?: Array<object>}>} sets
+   */
+  updateExamplesPreviews(sets) {
+    const list = Array.isArray(sets) ? sets : [];
+    const cards = [...this.examplesList.children].filter(
+      (c) => c.className === "examples-set",
+    );
+    if (
+      cards.length !== list.length ||
+      this._exampleSets?.length !== list.length
+    ) {
+      this.openExamples({ sets: list, alreadyAdded: this._exampleAdded });
+      return;
+    }
+    for (let s = 0; s < list.length; s++) {
+      const previewEl = [...cards[s].children].find(
+        (ch) => ch.className === "examples-preview",
+      );
+      if (!previewEl) {
+        this.openExamples({ sets: list, alreadyAdded: this._exampleAdded });
+        return;
+      }
+      const configTiles = Array.isArray(list[s].set?.tiles)
+        ? list[s].set.tiles
+        : [];
+      const rendered = Array.isArray(list[s].preview) ? list[s].preview : [];
+      const wraps = [...previewEl.children];
+      if (wraps.length !== configTiles.length) {
+        this.openExamples({ sets: list, alreadyAdded: this._exampleAdded });
+        return;
+      }
+      for (let i = 0; i < wraps.length; i++) {
+        wraps[i].replaceChildren(
+          ...this.#buildPreviewTile(rendered[i], configTiles[i]).children,
+        );
+      }
+    }
   }
 
   /** Error message in the overlay (e.g. a 400 on the merged config). */

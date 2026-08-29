@@ -235,13 +235,26 @@ test("dogfood starter set validates and round-trips cleanly", () => {
   assert.equal(flat.length, 1);
   const { set: starter } = flat[0];
 
-  // Each set validates in isolation.
+  // Each set validates in isolation. The tiles are copied verbatim from
+  // a live config, so they carry the empty `active` predicates the
+  // admin-UI form emits as blank scaffolds (allOf/anyOf/not with
+  // whenMissing:false only). config.js deliberately downgrades those to
+  // warnings (the engine ignores them — no green→neutral downgrade),
+  // never start-blocking errors — the form's own output must validate.
   const { errors, warnings } = validateConfig({
     contexts: starter.contexts || [],
     tiles: starter.tiles,
   });
   assert.deepEqual(errors, []);
-  assert.deepEqual(warnings, []);
+  assert.deepEqual(
+    warnings,
+    starter.tiles
+      .filter((t) => t.active)
+      .map(
+        (t) =>
+          `Tile "${t.id}" active predicate is empty — ignored (no green→neutral downgrade)`,
+      ),
+  );
 
   // Merging into empty, then validating the merged result, is clean.
   const { merged, added } = mergeIntoConfig(
@@ -250,10 +263,24 @@ test("dogfood starter set validates and round-trips cleanly", () => {
   );
   const v = validateConfig(merged);
   assert.deepEqual(v.errors, []);
-  assert.deepEqual(v.warnings, []);
-  assert.deepEqual(added.contexts, ["energySurplusWindow"]);
+  assert.deepEqual(
+    v.warnings,
+    starter.tiles
+      .filter((t) => t.active)
+      .map(
+        (t) =>
+          `Tile "${t.id}" active predicate is empty — ignored (no green→neutral downgrade)`,
+      ),
+  );
+  assert.deepEqual(added.contexts, ["anchored", "sailing", "at-rest"]);
   // Declaration order from the JSON is preserved (SPEC §11.1).
-  assert.deepEqual(added.tiles, ["energySurplus", "engineRun", "deployAdvice"]);
+  assert.deepEqual(added.tiles, [
+    "energy",
+    "flinsail",
+    "superwind",
+    "hydrogenerator",
+    "wind",
+  ]);
 
   // Re-add is a no-op skip.
   const again = mergeIntoConfig(merged, starter);
