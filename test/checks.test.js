@@ -282,6 +282,123 @@ describe("checks", () => {
     );
   });
 
+  test("differential: direction above ignores the safe side", () => {
+    // Anchor radius scenario: currentRadius 20 vs maxRadius 80. The
+    // absolute spread would be 60 (>= crit 30 -> red), but "above" only
+    // counts when path exceeds path2, so safely-inside stays green.
+    const c = cacheWith({ cur: 20, max: 80 });
+    assert.strictEqual(
+      evalCheck(
+        {
+          type: "differential",
+          path: "cur",
+          path2: "max",
+          warn: 0,
+          crit: 30,
+          direction: "above",
+        },
+        c,
+      ).state,
+      "green",
+    );
+    // At the threshold (diff 0 >= warn 0) -> amber
+    const cEq = cacheWith({ cur: 80, max: 80 });
+    assert.strictEqual(
+      evalCheck(
+        {
+          type: "differential",
+          path: "cur",
+          path2: "max",
+          warn: 0,
+          crit: 30,
+          direction: "above",
+        },
+        cEq,
+      ).state,
+      "amber",
+    );
+    // Over but below crit -> amber
+    const c2 = cacheWith({ cur: 82, max: 80 });
+    assert.strictEqual(
+      evalCheck(
+        {
+          type: "differential",
+          path: "cur",
+          path2: "max",
+          warn: 0,
+          crit: 30,
+          direction: "above",
+        },
+        c2,
+      ).state,
+      "amber",
+    );
+    // At/over crit -> red
+    const c3 = cacheWith({ cur: 110, max: 80 });
+    assert.strictEqual(
+      evalCheck(
+        {
+          type: "differential",
+          path: "cur",
+          path2: "max",
+          warn: 0,
+          crit: 30,
+          direction: "above",
+        },
+        c3,
+      ).state,
+      "red",
+    );
+  });
+
+  test("differential: direction below mirrors above", () => {
+    const c = cacheWith({ a: 80, b: 20 }); // a over b: safe side for below
+    assert.strictEqual(
+      evalCheck(
+        {
+          type: "differential",
+          path: "a",
+          path2: "b",
+          warn: 2,
+          crit: 5,
+          direction: "below",
+        },
+        c,
+      ).state,
+      "green",
+    );
+    const c2 = cacheWith({ a: 15, b: 20 }); // 5 under -> at crit -> red
+    assert.strictEqual(
+      evalCheck(
+        {
+          type: "differential",
+          path: "a",
+          path2: "b",
+          warn: 2,
+          crit: 5,
+          direction: "below",
+        },
+        c2,
+      ).state,
+      "red",
+    );
+    const c3 = cacheWith({ a: 19, b: 20 }); // 1 under, below warn -> green
+    assert.strictEqual(
+      evalCheck(
+        {
+          type: "differential",
+          path: "a",
+          path2: "b",
+          warn: 2,
+          crit: 5,
+          direction: "below",
+        },
+        c3,
+      ).state,
+      "green",
+    );
+  });
+
   test("alarmGroup: tripped path -> red; level sub-check -> amber", () => {
     const c = cacheWith({ a1: true, a2: false, lvl: 0.4 });
     assert.strictEqual(

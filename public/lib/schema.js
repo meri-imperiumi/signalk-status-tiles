@@ -259,7 +259,7 @@ const checkVariants = [
   {
     title: "Differential",
     description:
-      "Absolute difference between two paths vs warn/crit thresholds",
+      "Difference between two paths vs warn/crit thresholds; direction picks which side counts (default: absolute spread both ways)",
     type: "object",
     properties: {
       type: { type: "string", const: "differential" },
@@ -267,6 +267,14 @@ const checkVariants = [
       path2: { type: "string", title: "Path B" },
       warn: { type: "number", title: "Warn at/above" },
       crit: { type: "number", title: "Critical at/above" },
+      direction: {
+        type: "string",
+        title: "Direction",
+        enum: ["both", "above", "below"],
+        default: "both",
+        description:
+          "both = flag spread either way; above = only when Path A exceeds Path B; below = only when Path A falls short",
+      },
       display: displayField(),
       reason: reasonField(),
       staleState: staleStateField(),

@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.6.1] - 2026-09-06
+
+### Added
+
+- `differential` checks accept a `direction` option: `"above"` only
+  counts when Path A exceeds Path B, `"below"` only when it falls
+  short, while the default `"both"` keeps the absolute-spread
+  semantics. This enables one-sided limits against a dynamic
+  threshold from another path (e.g. anchor `currentRadius` vs
+  `maxRadius`: green while inside, amber at the threshold, red past
+  it) — previously any absolute spread, including being safely below
+  the threshold, tripped warn/crit.
+
 ## [0.6.0] - 2026-08-28
 
 ### Added

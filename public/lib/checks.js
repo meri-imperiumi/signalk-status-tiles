@@ -210,10 +210,16 @@ function evalBanded(check, cache, now) {
 }
 
 /**
- * differential: absolute difference between two paths against warn/crit
+ * differential: difference between two paths against warn/crit
  * thresholds (e.g. cell voltage spread) (SPEC §3.3).
  *
- * @param {object} check - `{ path, path2, warn, crit, staleState }`
+ * `direction` selects which side counts: "both" (default) flags the
+ * absolute spread either way; "above" only counts when path exceeds
+ * path2 and "below" only when path falls short of path2, so the safe
+ * side of a one-sided limit (e.g. anchor currentRadius vs maxRadius)
+ * stays green.
+ *
+ * @param {object} check - `{ path, path2, warn, crit, direction?, staleState }`
  * @param {import("./staleness.js").PathCache} cache
  * @param {number} now
  * @returns {CheckResult}
@@ -231,24 +237,38 @@ function evalDifferential(check, cache, now) {
   if (!Number.isFinite(a) || !Number.isFinite(b)) {
     return { state: "neutral", reason: "differential non-numeric" };
   }
-  const diff = Math.abs(a - b);
+  let diff;
+  let word;
+  let okReason = "spread ok";
+  if (check.direction === "above") {
+    diff = a - b;
+    word = "over";
+    okReason = "within";
+  } else if (check.direction === "below") {
+    diff = b - a;
+    word = "under";
+    okReason = "within";
+  } else {
+    diff = Math.abs(a - b);
+    word = "spread";
+  }
   if (check.crit != null && diff >= check.crit) {
     return {
       state: "red",
-      reason: `spread ${formatNum(diff)} >= ${check.crit}`,
+      reason: `${word} ${formatNum(diff)} >= ${check.crit}`,
       displayValue: check.display ? formatNum(diff) : undefined,
     };
   }
   if (check.warn != null && diff >= check.warn) {
     return {
       state: "amber",
-      reason: `spread ${formatNum(diff)} >= ${check.warn}`,
+      reason: `${word} ${formatNum(diff)} >= ${check.warn}`,
       displayValue: check.display ? formatNum(diff) : undefined,
     };
   }
   return {
     state: "green",
-    reason: check.reason || "spread ok",
+    reason: check.reason || okReason,
     displayValue: check.display ? formatNum(diff) : undefined,
   };
 }
