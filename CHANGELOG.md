@@ -6,6 +6,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Bigger tile headline values, same tile sizes: the default headline
+  grows from 6.5vh to 7.5vh and the step-down sizes for longer
+  composed headlines rise from 4vh/3.4vh to 6.5vh/5.5vh. On the
+  real-world installation the old default proved to be the smallest
+  size actually readable, so the smaller steps were illegible; longer
+  headlines now wrap at word boundaries instead of shrinking below
+  readable. Portrait (phone) keeps deliberately smaller sizes that fit
+  the two-across tiles — that portrait override was previously dead
+  CSS (shadowed by rule order, so portrait actually rendered at the
+  landscape size and overflowed the tiles); it now applies and also
+  overrides the per-length buckets.
+
 ## [0.6.1] - 2026-09-06
 
 ### Added

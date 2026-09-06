@@ -210,14 +210,28 @@ test("stylesheet handles portrait: row flow, two columns, scroll", () => {
   const g = newGrid();
   const style = g.shadowRoot.children[0]; // style is appended first
   assert.match(style.textContent, /@media \(orientation: portrait\)/);
-  const portrait = style.textContent.split("@media (orientation: portrait)")[1];
+  const css = style.textContent;
+  const portrait = css.split("@media (orientation: portrait)")[1];
   assert.match(portrait, /grid-auto-flow: row/);
   assert.match(
     portrait,
     /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/,
   );
   assert.match(portrait, /overflow-y: auto/);
-  assert.match(portrait, /font-size: 5.5vh/);
+  // Portrait headline sizes: deliberately smaller than the kiosk sizes
+  // (close-up phone use), overriding every landscape bucket.
+  assert.match(portrait, /\.value \{ font-size: 5vh; \}/);
+  assert.match(portrait, /\.value\[data-fit="m"\] \{ font-size: 4\.5vh; \}/);
+  assert.match(portrait, /\.value\[data-fit="l"\] \{ font-size: 4vh; \}/);
+  // The portrait block must come AFTER the .value size rules: with
+  // equal specificity source order decides, and when the block sat
+  // above them its font-size was silently shadowed — portrait
+  // rendered at the landscape size and overflowed the phone tiles.
+  assert.ok(
+    css.indexOf("@media (orientation: portrait)") >
+      css.indexOf('.value[data-fit="l"]'),
+    "portrait block follows the value size rules",
+  );
 });
 
 test("slot pool is reused across evaluations; occupants update in place", () => {

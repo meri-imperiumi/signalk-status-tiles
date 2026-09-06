@@ -25,7 +25,8 @@
  *
  * Portrait (phone/on-watch) is handled by a CSS orientation media
  * query: row-wise flow, at most two tiles across, vertical scroll —
- * see the block after .grid.
+ * see the media query after the .value rules (it must sit below
+ * them: equal specificity, so source order decides).
  *
  * Packing is deterministic and layout-time-only (SPEC §11.1):
  * recomputed only on config/screen change, never on a state change.
@@ -290,7 +291,7 @@ class StTileGrid extends HTMLElement {
         box-sizing: border-box;
       }
       .examples-preview .tile .label { font-size: 1.5vh; }
-      .examples-preview .tile .value { font-size: 3.5vh; }
+      .examples-preview .tile .value { font-size: 4.2vh; }
       .examples-preview .tile .reason { font-size: 1.2vh; }
       .examples-preview .tile .footer-label { font-size: 1.1vh; }
       .examples-preview .tile .footer-value { font-size: 1.4vh; }
@@ -322,39 +323,6 @@ class StTileGrid extends HTMLElement {
         flex: 1 1 auto;
         padding: 2vh 2vw;
         box-sizing: border-box;
-      }
-      /* Portrait (phone/on-watch, spec §4): the column-wise flow above
-         puts ceil(total/3) columns side by side — on a phone those are
-         unreadably narrow strips. Instead: row-wise flow, at most two
-         tiles across, scrolling down past the fold. A pure orientation
-         media query — no JS, no resize listeners: this webapp is always
-         full-viewport (SPEC §11), so viewport orientation IS grid
-         orientation, and an orientation change is exactly the
-         layout-invalidating event SPEC §11.1 allows. The chrome band
-         wraps to two lines (its height was fixed to protect the grid
-         from re-flow; in portrait it yields so vessel/context/clock
-         all stay readable). */
-      @media (orientation: portrait) {
-        .chrome {
-          height: auto;
-          min-height: 4.6vh;
-          flex-wrap: wrap;
-          white-space: normal;
-        }
-        .grid {
-          grid-auto-flow: row;
-          grid-template-rows: none;
-          grid-auto-columns: auto;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          grid-auto-rows: minmax(22vh, 1fr);
-          overflow-y: auto;
-        }
-        .value {
-          /* Two-across phone tiles have ~42vw of inner width; 6.5vh
-             monospace digits overflow that on common phones, so the
-             headline number steps down a notch in portrait. */
-          font-size: 5.5vh;
-        }
       }
       .tile {
         position: relative;
@@ -463,7 +431,14 @@ class StTileGrid extends HTMLElement {
         grid-area: value;
         align-self: center;
         justify-self: center;
-        font-size: 6.5vh;
+        /* 7.5vh: on the real-world installation the previous 6.5vh
+           proved to be the smallest size actually readable at glance
+           distance — the headline gets headroom above that floor, and
+           the fit buckets below never drop far under it. Tiles still
+           fit: the value row is the flexible 1fr middle row, so a
+           bigger font (or a wrapped line) consumes tile-internal
+           slack, never grid geometry. */
+        font-size: 7.5vh;
         font-weight: 800;
         line-height: 1;
         font-family: ui-monospace, "Fira Code", monospace;
@@ -479,12 +454,56 @@ class StTileGrid extends HTMLElement {
         overflow-wrap: anywhere;
       }
       /* Composed headlines (displayParts: 'surplus 95%', 'deployed
-         starboard') are longer than a single number — 6.5vh fits ~7
-         monospace chars in a ~16vw tile. Step down by length bucket
-         (valueFit); the longest wrap at word boundaries instead of
-         overflowing the tile. */
-      .value[data-fit="m"] { font-size: 4vh; }
-      .value[data-fit="l"] { font-size: 3.4vh; }
+         starboard') are longer than a single number. The old deep
+         step-downs (4vh/3.4vh) fell far below the kiosk readability
+         floor (the old 6.5vh default — the smallest actually readable
+         size in the real-world installation), so the buckets now stay
+         near the default and longer headlines WRAP at word boundaries
+         — the centered value row grows a line — instead of shrinking
+         below readable. */
+      .value[data-fit="m"] { font-size: 6.5vh; }
+      .value[data-fit="l"] { font-size: 5.5vh; }
+      /* Portrait (phone/on-watch, spec §4): the column-wise flow in
+         .grid above puts ceil(total/3) columns side by side — on a
+         phone those are unreadably narrow strips. Instead: row-wise
+         flow, at most two tiles across, scrolling down past the fold.
+         A pure orientation media query — no JS, no resize listeners:
+         this webapp is always full-viewport (SPEC §11), so viewport
+         orientation IS grid orientation, and an orientation change is
+         exactly the layout-invalidating event SPEC §11.1 allows. The
+         chrome band wraps to two lines (its height was fixed to
+         protect the grid from re-flow; in portrait it yields so
+         vessel/context/clock all stay readable).
+         THIS BLOCK MUST STAY BELOW the .value rules above: they are
+         of equal or higher specificity, so with ties source order
+         decides — when this block sat above them, its font-size was
+         silently shadowed and portrait rendered at the landscape
+         size, overflowing the narrow two-across tiles. */
+      @media (orientation: portrait) {
+        .chrome {
+          height: auto;
+          min-height: 4.6vh;
+          flex-wrap: wrap;
+          white-space: normal;
+        }
+        .grid {
+          grid-auto-flow: row;
+          grid-template-rows: none;
+          grid-auto-columns: auto;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          grid-auto-rows: minmax(22vh, 1fr);
+          overflow-y: auto;
+        }
+        /* Portrait is the close-up case (phone in hand), so the
+           headline deliberately steps DOWN from the kiosk sizes:
+           two-across phone tiles have only ~43vw of inner width,
+           which landscape 7.5vh monospace digits overflow. The bucket
+           overrides are needed too — the data-fit selectors above
+           outspecify a plain .value rule. */
+        .value { font-size: 5vh; }
+        .value[data-fit="m"] { font-size: 4.5vh; }
+        .value[data-fit="l"] { font-size: 4vh; }
+      }
       .reason {
         grid-area: reason;
         font-size: 1.8vh;
@@ -1156,10 +1175,11 @@ export function shortPath(p) {
 }
 
 /**
- * Font-fit bucket for a headline string (see the .value CSS): tiles are
- * ~16vw wide, so the default 6.5vh headline fits ~7 monospace chars on
- * one line. Longer composed headlines step down and eventually wrap.
- * Buckets: s ≤7 chars (default size), m ≤12, l >12.
+ * Font-fit bucket for a headline string (see the .value CSS): the
+ * default 7.5vh headline fits ~6 monospace chars on one line in a
+ * ~16vw tile. Longer composed headlines step down only slightly (the
+ * buckets stay near the kiosk readability floor) and wrap at word
+ * boundaries instead. Buckets: s ≤7 chars (default size), m ≤12, l >12.
  * @param {string} s
  * @returns {"s"|"m"|"l"}
  */
