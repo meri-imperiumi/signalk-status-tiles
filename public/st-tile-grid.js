@@ -1,7 +1,7 @@
 /**
  * Full-viewport tile grid renderer (SPEC §11), styled per the Signal K
  * plugin UI spec: strictly flat panels (border-radius 0, no shadows, no
- * gradients), 2px corner brackets, monospace telemetry with tabular
+ * gradients), 4px corner brackets, monospace telemetry with tabular
  * numerals, and a day/night-reactive palette. Colors live as custom
  * properties on <html> (index.html) keyed by data-mode="day"|"night",
  * which app.js sets from the environment.mode delta (lib/mode.js) —
@@ -16,6 +16,9 @@
  *   - lit panel borders run at ~0.65 alpha (spec suggests "faint",
  *     ~0.3) and the state tint at 0.16 (spec: "ultra-faint"), so the
  *     state survives glare at glance distance
+ *   - strokes run at 4px — tile borders, corner brackets, and the
+ *     overflow-slot outline (spec: 2px) — so the state colors stay
+ *     distinguishable on the low-contrast kiosk screen
  *   - neutral tiles use a solid grey border + muted text instead of
  *     whole-tile opacity dimming — on a washed-out screen opacity only
  *     makes things illegible, and grey-vs-lit-color already reads as
@@ -285,8 +288,8 @@ class StTileGrid extends HTMLElement {
            inherit the host page's universal border-box rule (only custom
            properties pierce the boundary), so without this the tile
            defaults to content-box and width:100% sizes only the content
-           box — padding (1vw×2) + border (2px×2) are then added on top,
-           making the tile ~42px wider than its 17vw wrap and overlapping
+           box — padding (1vw×2) + border (4px×2) are then added on top,
+           making the tile ~46px wider than its 17vw wrap and overlapping
            the next wrap horizontally. */
         box-sizing: border-box;
       }
@@ -336,15 +339,20 @@ class StTileGrid extends HTMLElement {
         padding: 2.2vh 1.8vw;
         overflow: hidden;
         background: var(--bg-panel, #111414);
-        border: 2px solid rgba(var(--color-grey-rgb, 102, 102, 102), 0.35);
+        /* 4px, thicker than the spec's stroke: the border carries the
+           state color, and 2px was too thin to read that color on the
+           low-contrast kiosk screen at glance distance. */
+        border: 4px solid rgba(var(--color-grey-rgb, 102, 102, 102), 0.35);
         transition: background 0.2s, border-color 0.2s;
       }
-      /* Corner brackets (spec §5): 2px, via pseudo-elements on the
-         tile's top-left and bottom-right corners. Lit tiles get them
-         in the theme color; neutral/slot tiles in dimmed grey. The
-         inset is 0.6vh on BOTH axes — vh and vw must not be mixed
-         here, or the horizontal margin grows on widescreen displays
-         and the brackets read as misaligned. */
+      /* Corner brackets (spec §5): 4px strokes — thicker than the
+         spec's 2px for the same low-contrast-kiosk reason as the
+         tile border — via pseudo-elements on the tile's top-left
+         and bottom-right corners. Lit tiles get them in the theme
+         color; neutral/slot tiles in dimmed grey. The inset is
+         0.6vh on BOTH axes — vh and vw must not be mixed here, or
+         the horizontal margin grows on widescreen displays and the
+         brackets read as misaligned. */
       .tile::before,
       .tile::after {
         content: "";
@@ -356,14 +364,14 @@ class StTileGrid extends HTMLElement {
       .tile::before {
         top: 0.6vh;
         left: 0.6vh;
-        border-top: 2px solid var(--c, var(--color-grey, #666666));
-        border-left: 2px solid var(--c, var(--color-grey, #666666));
+        border-top: 4px solid var(--c, var(--color-grey, #666666));
+        border-left: 4px solid var(--c, var(--color-grey, #666666));
       }
       .tile::after {
         bottom: 0.6vh;
         right: 0.6vh;
-        border-bottom: 2px solid var(--c, var(--color-grey, #666666));
-        border-right: 2px solid var(--c, var(--color-grey, #666666));
+        border-bottom: 4px solid var(--c, var(--color-grey, #666666));
+        border-right: 4px solid var(--c, var(--color-grey, #666666));
       }
       .tile.neutral::before,
       .tile.neutral::after,
@@ -560,7 +568,7 @@ class StTileGrid extends HTMLElement {
         opacity: 1;
         border-color: rgba(var(--c-rgb), 0.65);
         background: rgba(var(--c-rgb), 0.16);
-        outline: 2px dashed var(--c);
+        outline: 4px dashed var(--c);
         outline-offset: -0.6vh;
       }
       .error {
@@ -820,7 +828,7 @@ class StTileGrid extends HTMLElement {
   /**
    * Builds the static skeleton of a tile element: label, value, reason,
    * footer containers. State and volatile content are filled in by
-   * #paintTile on every evaluation. The 2px corner brackets are CSS
+   * #paintTile on every evaluation. The 4px corner brackets are CSS
    * pseudo-elements (spec §5), not elements — no DOM cost per tile.
    * @param {object} t
    * @returns {HTMLElement}

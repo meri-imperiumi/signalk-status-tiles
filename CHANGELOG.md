@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Thicker state-color strokes: tile borders, corner brackets, and the
+  overflow-slot outline grow from 2px to 4px. The border carries the
+  state color (green/amber/red), and on the low-contrast kiosk screen
+  the 2px stroke was too thin to distinguish the colors at glance
+  distance. Diverges from the plugin UI spec's 2px brackets, like the
+  existing alpha divergences documented in `st-tile-grid.js`.
+
 ## [0.6.2] - 2026-09-06
 
 ### Changed
