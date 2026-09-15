@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `PUT /examples` (copying an example tile set) double-wrapped the
+  stored plugin config on every save: it passed the server's
+  `{ configuration, enabled }` envelope to `savePluginOptions()` and
+  the restart callback, which both expect the bare config and wrap it
+  themselves. Each Add nested the stored config one level deeper, so
+  repeated Adds replaced the tile grid instead of adding to it.
+
 ## [0.6.3] - 2026-09-08
 
 ### Changed
