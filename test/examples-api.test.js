@@ -33,12 +33,28 @@ const EXAMPLE_SET = {
  * registerWithRouter-captured express-like router. Every handler that
  * could be called is wired; missing ones default to no-ops so a test
  * that doesn't exercise them isn't cluttered.
+ *
+ * readPluginOptions/savePluginOptions deliberately mirror
+ * signalk-server's real (asymmetric) contract rather than a simplified
+ * one: internally this holds the server's own envelope shape,
+ * `{ configuration: <bare config>, enabled }`. `readPluginOptions()`
+ * returns that whole envelope; `savePluginOptions(bareConfig, cb)`
+ * takes the *bare* config (matching what `start(config)` itself
+ * receives) and wraps it itself — `envelope.configuration = bareConfig`
+ * — exactly like signalk-server's `appCopy.savePluginOptions`. A fake
+ * that instead treated both as symmetric (as an earlier version of this
+ * file did) can't catch a caller that round-trips the wrapped shape
+ * back into savePluginOptions, which is exactly the bug in issue #1:
+ * every such round-trip nests the stored config one level deeper.
  */
 function fakeApp({ storedOptions = SAMPLE } = {}) {
   /** @type {object|null} the resource provider registered, if any */
   let provider = null;
-  /** @type {object} stored plugin options (mutated by savePluginOptions) */
-  let stored = structuredClone(storedOptions);
+  /** @type {object} the server's own envelope: { configuration, enabled } */
+  let envelope = {
+    configuration: structuredClone(storedOptions),
+    enabled: true,
+  };
   /** @type {Array<{verb: string, path: string, handler: Function}>} */
   const routerRoutes = [];
   const router = {
@@ -51,7 +67,12 @@ function fakeApp({ storedOptions = SAMPLE } = {}) {
     messages,
     provider: () => provider,
     routerRoutes,
-    storedOptions: () => stored,
+    /** The bare persisted config (`envelope.configuration`) — what most
+     * tests actually want to assert against. */
+    storedConfig: () => structuredClone(envelope.configuration),
+    /** The full server envelope, for tests that want to check nesting
+     * hasn't crept in (issue #1's regression shape). */
+    storedEnvelope: () => structuredClone(envelope),
     feed(delta, deltaCallback) {
       deltaCallback?.(delta);
     },
@@ -70,9 +91,9 @@ function fakeApp({ storedOptions = SAMPLE } = {}) {
     registerResourceProvider(p) {
       provider = p;
     },
-    readPluginOptions: () => structuredClone(stored),
-    savePluginOptions: (opts, cb) => {
-      stored = structuredClone(opts);
+    readPluginOptions: () => structuredClone(envelope),
+    savePluginOptions: (bareConfig, cb) => {
+      envelope = { ...envelope, configuration: structuredClone(bareConfig) };
       // Mirror the real server's async cb contract.
       setImmediate(() => cb(null));
     },
@@ -194,7 +215,7 @@ test("PUT /examples merges the set, validates, persists, and restarts", async ()
   });
   assert.deepEqual(res.body.skipped, { contexts: [], tiles: [] });
   // Persisted (merged contains both old and new).
-  const stored = app.storedOptions();
+  const stored = app.storedConfig();
   assert.deepEqual(
     stored.tiles.map((t) => t.id),
     ["existing", "newtile"],
@@ -209,6 +230,62 @@ test("PUT /examples merges the set, validates, persists, and restarts", async ()
     restartedWith.tiles.map((t) => t.id),
     ["existing", "newtile"],
   );
+  // Regression for issue #1: what's persisted and what restart() got
+  // are both the *bare* config — neither wraps a `configuration` key
+  // around the whole thing (which is what nested storage one level
+  // deeper on every add).
+  assert.ok(!("configuration" in stored));
+  assert.ok(!("configuration" in restartedWith));
+  plugin.stop();
+});
+
+test("PUT /examples across two calls accumulates tiles instead of nesting the stored config (issue #1)", async () => {
+  // The regression: app.readPluginOptions() returns the server's
+  // wrapped envelope ({ configuration, enabled }). Two successive PUT
+  // /examples calls — each merging a *different* set — must both:
+  //  1. leave the stored config at a single nesting level throughout
+  //     (never `stored.configuration.configuration...`), and
+  //  2. accumulate tiles from *both* calls, not just the most recent
+  //     one (the actual symptom reported: "Add" appeared to replace
+  //     the whole tile grid rather than adding to it).
+  const app = fakeApp();
+  const plugin = pluginFactory(app);
+  const restarts = [];
+  plugin.start(SAMPLE, (cfg) => restarts.push(cfg));
+  plugin.registerWithRouter(app._router);
+
+  const OTHER_SET = {
+    contexts: [],
+    tiles: [{ id: "othertile", checks: [{ type: "boolean", path: "r" }] }],
+  };
+
+  callRoute(findRoute(app, "put", "/examples"), { body: EXAMPLE_SET });
+  await new Promise((r) => setImmediate(r));
+  callRoute(findRoute(app, "put", "/examples"), { body: OTHER_SET });
+  await new Promise((r) => setImmediate(r));
+
+  const envelope = app.storedEnvelope();
+  // Exactly one level of wrapping — the stored config itself carries no
+  // nested `configuration` key.
+  assert.ok(!("configuration" in envelope.configuration));
+
+  const stored = app.storedConfig();
+  assert.deepEqual(
+    stored.tiles.map((t) => t.id),
+    ["existing", "newtile", "othertile"],
+  );
+
+  // Both restart calls got the bare shape too, and the second restart's
+  // tile list already includes the first call's addition (proving the
+  // second PUT actually saw the first PUT's merge, rather than reading
+  // a stale/empty view because it was buried under an extra wrapper).
+  assert.equal(restarts.length, 2);
+  for (const cfg of restarts) assert.ok(!("configuration" in cfg));
+  assert.deepEqual(
+    restarts[1].tiles.map((t) => t.id),
+    ["existing", "newtile", "othertile"],
+  );
+
   plugin.stop();
 });
 
@@ -226,7 +303,7 @@ test("PUT /examples skips (never clobbers) duplicate ids", async () => {
     },
   });
   const plugin = pluginFactory(app);
-  plugin.start(app.storedOptions(), () => {});
+  plugin.start(app.storedConfig(), () => {});
   plugin.registerWithRouter(app._router);
 
   const res = callRoute(findRoute(app, "put", "/examples"), {
@@ -239,7 +316,7 @@ test("PUT /examples skips (never clobbers) duplicate ids", async () => {
   assert.deepEqual(res.body.added, { contexts: ["newctx"], tiles: [] });
   assert.deepEqual(res.body.skipped, { contexts: [], tiles: ["newtile"] });
   // Existing tile untouched (never clobbered).
-  assert.equal(app.storedOptions().tiles[0].label, "mine");
+  assert.equal(app.storedConfig().tiles[0].label, "mine");
   plugin.stop();
 });
 
@@ -263,7 +340,7 @@ test("PUT /examples re-add is idempotent", async () => {
     tiles: ["newtile"],
   });
   // No duplication.
-  assert.equal(app.storedOptions().tiles.length, 2);
+  assert.equal(app.storedConfig().tiles.length, 2);
   plugin.stop();
 });
 

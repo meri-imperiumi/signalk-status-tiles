@@ -453,12 +453,26 @@ export default function (app) {
         }
         const stored = app.readPluginOptions();
         const { merged, added, skipped } = mergeIntoConfig(stored, set);
-        const { errors } = validateConfig(merged);
+        // `app.readPluginOptions()` returns the server's own envelope
+        // shape (`{ configuration, enabled }`); mergeIntoConfig detects
+        // that and round-trips it in `merged` (see its "preserves the
+        // wrapper shape" contract in public/lib/examples.js). But
+        // `app.savePluginOptions()` and the `restart` callback both
+        // expect the *bare* inner config — the same shape `start(config)`
+        // itself receives — and wrap it themselves on persist. Handing
+        // them the still-wrapped `merged` therefore nested the stored
+        // config one level deeper on every single call, silently
+        // corrupting it after repeated Add clicks (issue #1). Unwrap
+        // once more here, at the point of use, rather than changing what
+        // mergeIntoConfig returns — other callers (e.g. the tile preview
+        // flow) rely on its round-trip behavior.
+        const mergedInner = unwrapConfig(merged);
+        const { errors } = validateConfig(mergedInner);
         if (errors.length > 0) {
           res.status(400).json({ message: "Merged config is invalid", errors });
           return;
         }
-        app.savePluginOptions(merged, (err) => {
+        app.savePluginOptions(mergedInner, (err) => {
           if (err) {
             app.error(
               `[status-tiles] failed to save merged examples config: ${err?.message || err}`,
@@ -474,7 +488,7 @@ export default function (app) {
           // reload. Whether restart alone persists varies across server
           // versions, so savePluginOptions is called regardless.
           try {
-            restartFn(merged);
+            restartFn(mergedInner);
           } catch (e) {
             app.error(
               `[status-tiles] restart() threw after examples merge: ${e?.message || e}`,
