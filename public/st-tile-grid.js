@@ -36,6 +36,8 @@
  *
  * @file st-tile-grid.js */
 
+import { shipTime } from "./lib/timezone.js";
+
 /**
  * Tile state → spec theme class (signalk-visuals.md §5). The class
  * assigns the local --c/--c-rgb pair from the day/night palette
@@ -51,7 +53,32 @@ export const STATE_THEME = {
   opportunity: "teal",
 };
 
+/**
+ * Formats an instant at the given offset (minutes east of UTC) as the
+ * chrome clock's `YYYY-MM-DD HH:MM:SS` wall-clock string: the Date is
+ * shifted by the offset (shipTime) and read with UTC getters, so the
+ * same code renders both ship time and — with the device's own offset
+ * — device-local time. Spec time rules: no timezone suffix, tabular
+ * monospace rendering is CSS's job.
+ * @param {Date} date - the instant
+ * @param {number} offsetMinutes - minutes east of UTC
+ * @returns {string}
+ */
+export function formatClock(date, offsetMinutes) {
+  const d = shipTime(date, offsetMinutes);
+  const p = (n) => String(n).padStart(2, "0");
+  return (
+    `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ` +
+    `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`
+  );
+}
+
 class StTileGrid extends HTMLElement {
+  /** Onboard timezone offset for the clock, minutes east of UTC; null
+   * means the display device's own timezone.
+   * @type {number|null} */
+  #clockOffset = null;
+
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
@@ -706,17 +733,39 @@ class StTileGrid extends HTMLElement {
   }
 
   /**
-   * Formats the local date/time into the chrome's clock element.
+   * Onboard timezone offset for the clock (minutes east of UTC), from
+   * `environment.time.timezoneOffset`. Null clears it back to
+   * device-local time. Redraws immediately so a change lands this
+   * second instead of on the next tick.
+   * @param {number|null} minutes
+   */
+  set clockOffset(minutes) {
+    this.#clockOffset = typeof minutes === "number" ? minutes : null;
+    this.updateClock();
+  }
+
+  /** @returns {number|null} minutes east of UTC, or null for device-local */
+  get clockOffset() {
+    return this.#clockOffset;
+  }
+
+  /**
+   * Formats the ship date/time into the chrome's clock element.
    * Spec time rules: local ship time carries no timezone suffix, dates
    * as YYYY-MM-DD. Monospace tabular numerals keep the seconds tick
    * from jiggling the layout.
+   *
+   * Ship time comes from the boat's own `environment.time.timezoneOffset`
+   * (a helm display's device clock may be set to anything); without it
+   * the clock falls back to the display device's local timezone. Both
+   * go through the same shifted-Date path — a Date advanced by minutes
+   * east of UTC renders with getUTC* as wall-clock time.
    */
   updateClock() {
-    const d = new Date();
-    const p = (n) => String(n).padStart(2, "0");
-    this.clockEl.textContent =
-      `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
-      `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    const now = new Date();
+    const offsetMinutes =
+      this.#clockOffset != null ? this.#clockOffset : -now.getTimezoneOffset();
+    this.clockEl.textContent = formatClock(now, offsetMinutes);
   }
 
   /** Vessel name from the `name` path (set by the app on each eval). */

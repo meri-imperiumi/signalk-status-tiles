@@ -6,7 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.6.4] - 2026-09-16
+### Added
+
+- The chrome clock now shows ship time from the boat's own
+  `environment.time.timezoneOffset` path (onboard offset from UTC in
+  (-)hhmm encoding, e.g. 200, -930) instead of the display device's
+  timezone: a helm display's device clock may be set to anything, but
+  the crew reads wall-clock time. Bootstrapped via one-shot REST like
+  `environment.mode`, kept live through the stream subscription (e.g.
+  crossing timezones), and falling back to device-local time when the
+  boat doesn't publish the path.
 
 ### Fixed
 

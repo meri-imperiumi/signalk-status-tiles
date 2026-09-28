@@ -18,8 +18,14 @@ globalThis.document = {
   createElement: () => ({ classList: { add: () => {} } }),
 };
 
-const { shortenReason, lastSegment, shortPath, valueFit, STATE_THEME } =
-  await import("../public/st-tile-grid.js");
+const {
+  formatClock,
+  shortenReason,
+  lastSegment,
+  shortPath,
+  valueFit,
+  STATE_THEME,
+} = await import("../public/st-tile-grid.js");
 
 test("state theme mapping: every lit state resolves to a spec theme class", () => {
   // amber rides the spec's orange ramp position, opportunity its own
@@ -31,6 +37,29 @@ test("state theme mapping: every lit state resolves to a spec theme class", () =
     red: "red",
     opportunity: "teal",
   });
+});
+
+test("formatClock renders wall-clock time at the given offset", () => {
+  // 12:00Z at ship offset UTC+2 reads 14:00, spec format YYYY-MM-DD
+  // HH:MM:SS with no timezone suffix.
+  assert.equal(
+    formatClock(new Date("2026-07-01T12:00:00Z"), 120),
+    "2026-07-01 14:00:00",
+  );
+  // A large negative offset crosses the date line backwards.
+  assert.equal(
+    formatClock(new Date("2026-07-01T12:00:00Z"), -570),
+    "2026-07-01 02:30:00",
+  );
+  assert.equal(
+    formatClock(new Date("2026-07-01T12:00:00Z"), 0),
+    "2026-07-01 12:00:00",
+  );
+  // Seconds and zero-padded fields stay two wide.
+  assert.equal(
+    formatClock(new Date("2026-01-05T03:04:05Z"), -120),
+    "2026-01-05 01:04:05",
+  );
 });
 
 test("lastSegment returns the final dot-segment", () => {

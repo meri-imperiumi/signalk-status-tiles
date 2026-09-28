@@ -26,6 +26,11 @@ import {
 import { collectPaths, unwrapConfig } from "./lib/paths.js";
 import { previewTiles } from "./lib/preview.js";
 import { PathCache } from "./lib/staleness.js";
+import {
+  ENVIRONMENT_TIMEZONE_OFFSET_PATH,
+  fetchEnvironmentTimezoneOffset,
+  timezoneOffsetFromDelta,
+} from "./lib/timezone.js";
 import { fetchVesselName } from "./lib/vessel.js";
 import { SignalKStream } from "./st-stream.js";
 import "./st-tile-grid.js";
@@ -130,6 +135,15 @@ class StApp extends HTMLElement {
       if (mode) applyMode(mode);
     });
 
+    // Ship time for the chrome clock: same bootstrap pattern as the
+    // mode — environment.time.timezoneOffset is typically set long
+    // before we subscribe, so the initial value comes from REST; the
+    // delta subscription covers live changes (e.g. crossing timezones).
+    // Null (path absent) keeps the device-local fallback.
+    fetchEnvironmentTimezoneOffset().then((offset) => {
+      if (offset != null) this.gridEl.clockOffset = offset;
+    });
+
     // Reserved overflow slots are layout-time config (SPEC §10/§11.1):
     // set once, before the first evaluation renders the grid — and
     // again on a config reload.
@@ -177,6 +191,8 @@ class StApp extends HTMLElement {
         // erroring.
         const mode = modeFromDelta(delta);
         if (mode) applyMode(mode);
+        const tzOffset = timezoneOffsetFromDelta(delta);
+        if (tzOffset != null) this.gridEl.clockOffset = tzOffset;
         if (!this.engine) return;
         try {
           this.engine.onDelta(delta);
@@ -388,9 +404,10 @@ class StApp extends HTMLElement {
 
   /**
    * Watched paths: everything the engine needs (contexts, checks,
-   * footers, coverage candidates) plus `name` for the chrome bar's
-   * vessel identity and the config-hash change signal — same stream,
-   * two extra subscriptions.
+   * footers, coverage candidates) plus the chrome bar's own inputs —
+   * `name` for vessel identity, the config-hash change signal, and the
+   * day/night + ship-timezone chrome paths — same stream, extra
+   * subscriptions.
    * @returns {string[]}
    */
   #watchedPaths() {
@@ -400,6 +417,7 @@ class StApp extends HTMLElement {
         "name",
         CONFIG_HASH_PATH,
         ENVIRONMENT_MODE_PATH,
+        ENVIRONMENT_TIMEZONE_OFFSET_PATH,
       ]),
     ];
   }
