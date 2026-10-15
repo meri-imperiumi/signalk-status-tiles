@@ -77,8 +77,13 @@ export function createEngine(config, onEval, options = {}) {
         ? new Date(update.timestamp).getTime()
         : Date.now();
       for (const v of update.values || []) {
+        const prev = cache.entries.get(v.path);
         cache.set(v.path, v.value, ts);
-        changed.add(v.path);
+        // Only paths whose value actually changed are reported: a
+        // re-broadcast of an identical value (the common case at a
+        // minPeriod cadence) must not trigger a re-evaluation. The
+        // timestamp still updates, so freshness tracking is unaffected.
+        if (!prev || prev.value !== v.value) changed.add(v.path);
       }
       for (const m of update.meta || []) {
         cache.setMeta(m.path, m.value);

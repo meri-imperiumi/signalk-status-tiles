@@ -6,6 +6,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Server and webapp load reduced sharply. The timer-driven evaluation
+  tick slowed from 1s to 5s on both the server plugin and the webapp
+  (staleness discovery is now the worst-case surfacing delay for a
+  stale tile, which needs no sub-second precision); delta-driven
+  evaluations now only run when a watched value actually changed —
+  identical re-broadcasts at the minPeriod cadence cost nothing — and
+  coalesce to at most one full-engine evaluation per 2s on the server,
+  trailing edge, so a burst of deltas costs one evaluation instead of
+  one per message. The webapp's config poll backstop slowed from every
+  5s to every 3 minutes: the stream hash-delta is the primary change
+  signal, and each poll fetches the full config body, so the old
+  cadence made every connected display a steady request load on the
+  server.
+- The dogfood example tile set (`status-tiles-examples.json`) is no
+  longer read synchronously at module load: it loads asynchronously on
+  first use, so the plugin never blocks the server's event loop with
+  disk I/O. A malformed file now logs and yields an empty example set
+  instead of crashing plugin load.
+
 ### Added
 
 - The chrome clock now shows ship time from the boat's own

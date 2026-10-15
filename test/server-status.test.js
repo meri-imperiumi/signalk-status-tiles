@@ -172,11 +172,50 @@ test("subscribes to every config-referenced path", (t) => {
   );
 });
 
-test("a watched-path delta publishes the changed state", (t) => {
+test("delta-driven evaluations coalesce within the throttle window", (t) => {
+  t.mock.timers.enable({ now: Date.now() });
   const app = fakeApp();
   const plugin = pluginFactory(app);
   t.after(() => plugin.stop());
   plugin.start(SAMPLE);
+  // The start() baseline evaluation holds the throttle window shut;
+  // 2s later it is open again and a changed delta evaluates at once.
+  // (Mock-timer ticks fire due timers with the tick's end time, so the
+  // window re-opens exactly EVAL_THROTTLE_MS after the last eval.)
+  t.mock.timers.tick(2_000);
+
+  // A burst of changes inside one throttle window: only the leading
+  // evaluation runs immediately, and the trailing one sees the final
+  // value. The intermediate green state never publishes at all.
+  app.feed(delta(SOC_PATH, 0.2)); // amber, leading eval
+  app.feed(delta(SOC_PATH, 0.9)); // green, coalesced away
+  app.feed(delta(SOC_PATH, 0.25)); // amber, trailing eval sees this
+  assert.equal(latest(app).get("soc"), "amber");
+  assert.ok(
+    !statusValues(app).some(
+      (v) => v.path === tileStatusPath("soc") && v.value === "green",
+    ),
+    "intermediate state never published",
+  );
+
+  // The trailing evaluation lands within the throttle window and
+  // confirms the coalesced state (amber, from the last value).
+  t.mock.timers.tick(2_000);
+  assert.equal(latest(app).get("soc"), "amber");
+
+  // After the window, a new change evaluates and publishes normally.
+  app.feed(delta(SOC_PATH, 0.9));
+  t.mock.timers.tick(2_000);
+  assert.equal(latest(app).get("soc"), "green");
+});
+
+test("a watched-path delta publishes the changed state", (t) => {
+  t.mock.timers.enable({ now: Date.now() });
+  const app = fakeApp();
+  const plugin = pluginFactory(app);
+  t.after(() => plugin.stop());
+  plugin.start(SAMPLE);
+  t.mock.timers.tick(2_000); // open the throttle window (see above)
 
   // 0.2 < low.warn 0.4 => amber
   app.feed(delta(SOC_PATH, 0.2));
@@ -194,14 +233,17 @@ test("a watched-path delta publishes the changed state", (t) => {
 
   // Back to a good SoC => green
   app.feed(delta(SOC_PATH, 0.9));
+  t.mock.timers.tick(2_000);
   assert.equal(latest(app).get("soc"), "green");
 });
 
 test("context-hidden tiles publish null, context-active ones evaluate", (t) => {
+  t.mock.timers.enable({ now: Date.now() });
   const app = fakeApp();
   const plugin = pluginFactory(app);
   t.after(() => plugin.stop());
   plugin.start(SAMPLE);
+  t.mock.timers.tick(2_000); // open the throttle window (see above)
 
   // Wind picks up: sailing active, anchor tile now evaluates. Its
   // input is absent => boolean stale default neutral.
@@ -210,6 +252,7 @@ test("context-hidden tiles publish null, context-active ones evaluate", (t) => {
 
   // Wind drops: context inactive => null, never a lingering state
   app.feed(delta(WIND_PATH, 2));
+  t.mock.timers.tick(2_000);
   assert.equal(latest(app).get("anchor"), null);
 });
 
@@ -219,20 +262,25 @@ test("timer tick discovers staleness and publishes it", (t) => {
   const plugin = pluginFactory(app);
   t.after(() => plugin.stop());
   plugin.start(SAMPLE);
+  t.mock.timers.tick(2_000); // open the throttle window (see above)
 
   app.feed(delta(SOC_PATH, 0.9));
+  t.mock.timers.tick(2_000);
   assert.equal(latest(app).get("soc"), "green");
 
-  // Default staleMs is 60s: after 61s of silence the timer-driven
-  // tick (SPEC §8) flips the tile to its stale state.
+  // Default staleMs is 60s: silence since the delta's timestamp means
+  // the timer-driven tick (SPEC §8) flips the tile to its stale state
+  // at the first tick boundary past the threshold (here +65s).
   t.mock.timers.tick(61_000);
   assert.equal(latest(app).get("soc"), "neutral");
 });
 
-test("stop unsubscribes and nulls published statuses", () => {
+test("stop unsubscribes and nulls published statuses", (t) => {
+  t.mock.timers.enable({ now: Date.now() });
   const app = fakeApp();
   const plugin = pluginFactory(app);
   plugin.start(SAMPLE);
+  t.mock.timers.tick(2_000); // open the throttle window (see above)
   app.feed(delta(SOC_PATH, 0.2));
   assert.equal(latest(app).get("soc"), "amber");
 

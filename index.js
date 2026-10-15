@@ -24,7 +24,7 @@
 /** @typedef {import("@signalk/server-api").Plugin} Plugin */
 
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { validateConfig } from "./public/lib/config.js";
 import { CONFIG_HASH_PATH, canonicalJson } from "./public/lib/config-hash.js";
 import { createEngine } from "./public/lib/engine.js";
@@ -35,17 +35,6 @@ import {
   TILE_STATUS_DESCRIPTION,
   tileStatusPath,
 } from "./public/lib/status-paths.js";
-
-/**
- * This plugin's own dogfood example set (doc/example-tiles-plan.md): the
- * energy-predictor tiles from SPEC §7.1, self-discovered via the same
- * `statusTileExamples` resource provider any other plugin registers.
- * Read once at module load; a malformed file crashes plugin load on
- * purpose (it ships with the package, so it is always well-formed).
- */
-const STARTER_EXAMPLES = JSON.parse(
-  readFileSync(new URL("./status-tiles-examples.json", import.meta.url)),
-);
 
 /** Resource type other plugins (and this one) register example sets under. */
 const EXAMPLES_RESOURCE_TYPE = "statusTileExamples";
@@ -66,9 +55,20 @@ const CONFIG_PATH = "/signalk/v2/api/status-tiles/configuration";
  * Timer-driven evaluation tick (SPEC §8): the only way staleness is
  * ever discovered for a path that stopped sending. Same cadence as the
  * webapp's tick; publishing stays change-driven so a quiet system
- * emits nothing.
+ * emits nothing. Deliberately slow: every tick is a full-engine
+ * evaluation on the server's event loop, and staleness thresholds
+ * (default 60s) need no sub-second precision — the cadence only sets
+ * the worst-case delay for surfacing a stale tile.
  */
-const STATUS_TICK_MS = 1000;
+const STATUS_TICK_MS = 5000;
+
+/**
+ * Delta-driven evaluations coalesce (SPEC §8): at most one full-engine
+ * evaluation per interval, trailing edge, so a burst of deltas costs
+ * one evaluation — not one per message. Only *changed* values schedule
+ * one at all (engine.onDelta reports per-path value changes).
+ */
+const EVAL_THROTTLE_MS = 2000;
 
 /**
  * Stable hash of the config contents (sha256 over the canonical
@@ -105,6 +105,12 @@ export default function (app) {
   let evalTimer = null;
   /** @type {Map<string, string|null>} last status published per tile id */
   const lastPublished = new Map();
+  /** @type {number} Date.now() of the last engine evaluation */
+  let lastEvalAt = 0;
+  /** @type {ReturnType<typeof setTimeout>|null} trailing evaluation timer */
+  let pendingEval = null;
+  /** @type {Promise<object>|null} lazy load of the dogfood example set */
+  let starterExamples = null;
 
   // --- Example tile sets (doc/example-tiles-plan.md) ------------------
   // This plugin both *provides* a dogfood set and *consumes* sets from
@@ -131,6 +137,33 @@ export default function (app) {
    * servers without the resource provider registry (older servers);
    * example discovery simply won't include this plugin's dogfood set.
    */
+  /**
+   * Lazily loads this plugin's own dogfood example set
+   * (doc/example-tiles-plan.md): the energy-predictor tiles from SPEC
+   * §7.1, self-discovered via the same `statusTileExamples` resource
+   * provider any other plugin registers. Read asynchronously on first
+   * use — never synchronously on the server's event loop (a plugin
+   * must not block the process, even briefly, at module load). A
+   * malformed file (it ships with the package, so this should not
+   * happen) logs and yields an empty set rather than crashing the
+   * server's plugin load.
+   */
+  function loadStarterExamples() {
+    starterExamples ??= readFile(
+      new URL("./status-tiles-examples.json", import.meta.url),
+      "utf8",
+    ).then(
+      (json) => JSON.parse(json),
+      (err) => {
+        app.error(
+          `[status-tiles] failed to load example tile set: ${err?.message || err}`,
+        );
+        return {};
+      },
+    );
+    return starterExamples;
+  }
+
   function registerExamplesProvider() {
     if (providerRegistered) return;
     if (typeof app.registerResourceProvider !== "function") {
@@ -143,14 +176,14 @@ export default function (app) {
       type: EXAMPLES_RESOURCE_TYPE,
       methods: {
         listResources: async () =>
-          running ? { [PLUGIN_ID]: STARTER_EXAMPLES } : {},
+          running ? { [PLUGIN_ID]: await loadStarterExamples() } : {},
         getResource: async (id) => {
           if (!running || id !== PLUGIN_ID) {
             throw new Error(
               `No such ${EXAMPLES_RESOURCE_TYPE} resource: ${id}`,
             );
           }
-          return STARTER_EXAMPLES;
+          return loadStarterExamples();
         },
         setResource: async () => {
           throw new Error(`${PLUGIN_ID} is a read-only provider`);
@@ -175,6 +208,8 @@ export default function (app) {
   function teardown({ publishClears = false } = {}) {
     if (evalTimer != null) clearInterval(evalTimer);
     evalTimer = null;
+    if (pendingEval != null) clearTimeout(pendingEval);
+    pendingEval = null;
     for (const unsubscribe of unsubscribes) {
       try {
         unsubscribe();
@@ -218,11 +253,31 @@ export default function (app) {
 
   /** Runs one evaluation, isolating errors from the timer/subscription. */
   function runEvaluate() {
+    lastEvalAt = Date.now();
     try {
       engine?.evaluate();
     } catch (err) {
       app.error(`Status evaluation error: ${err?.message || err}`);
     }
+  }
+
+  /**
+   * Schedules a delta-driven evaluation (SPEC §8), throttled to at most
+   * one per EVAL_THROTTLE_MS with a trailing edge: a burst of deltas
+   * costs one evaluation, and the final change always lands. Callers
+   * only invoke this when the engine reported an actual value change.
+   */
+  function scheduleDeltaEvaluate() {
+    if (pendingEval != null) return;
+    const wait = Math.max(0, EVAL_THROTTLE_MS - (Date.now() - lastEvalAt));
+    if (wait === 0) {
+      runEvaluate();
+      return;
+    }
+    pendingEval = setTimeout(() => {
+      pendingEval = null;
+      runEvaluate();
+    }, wait);
   }
 
   /**
@@ -267,10 +322,13 @@ export default function (app) {
         app.error(`Subscription error: ${subscriptionError}`);
       },
       (delta) => {
-        // Delta-driven trigger (SPEC §8): feed the cache, re-evaluate.
+        // Delta-driven trigger (SPEC §8): feed the cache; re-evaluate
+        // only when a value actually changed (a quiet system
+        // re-broadcasting identical values costs no evaluation), and
+        // then no more often than EVAL_THROTTLE_MS.
         try {
-          engine?.onDelta(delta);
-          engine?.evaluate();
+          const changed = engine?.onDelta(delta);
+          if (changed && changed.size > 0) scheduleDeltaEvaluate();
         } catch (err) {
           app.error(`Status evaluation error: ${err?.message || err}`);
         }

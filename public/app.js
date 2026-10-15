@@ -42,19 +42,20 @@ const PLUGIN_ID = "signalk-status-tiles";
 const PLUGIN_ROUTER = `/plugins/${PLUGIN_ID}`;
 /** Read-only aggregated example sets from all providing plugins. */
 const EXAMPLES_RESOURCES = "/signalk/v2/api/resources/statusTileExamples";
-const EVAL_INTERVAL_MS = 1000; // timer-driven staleness discovery tick
+const EVAL_INTERVAL_MS = 5000; // timer-driven staleness discovery tick
 /** Config-fetch retries: a plugin restart answers 503 for a moment. */
 const CONFIG_RETRIES = 4;
 const CONFIG_RETRY_MS = 500;
 /**
  * Poll the config hash for changes. The hash-delta over the stream is
- * the fast path, but it depends on the server delivering a delta for a
- * non-schema path (`statusTiles.configHash` under vessels.self), which
- * not all Signal K server versions do. The poll is the reliable
- * backstop: a config save is rare, so a light GET every few seconds is
- * cheap and catches the change regardless of stream behavior.
+ * the fast path and the primary signal; the poll is only a backstop
+ * for server versions that drop the delta for the non-schema path
+ * (`statusTiles.configHash` under vessels.self). A config save is
+ * rare, so the backstop runs only once every few minutes — each poll
+ * fetches the full config body, so a tighter cadence would turn every
+ * connected display into a steady request load on the server.
  */
-const CONFIG_POLL_MS = 5000;
+const CONFIG_POLL_MS = 180_000;
 
 /**
  * Debug logging, off by default. Enable with `?st-debug=1` in the URL
@@ -195,8 +196,12 @@ class StApp extends HTMLElement {
         if (tzOffset != null) this.gridEl.clockOffset = tzOffset;
         if (!this.engine) return;
         try {
-          this.engine.onDelta(delta);
-          this.engine.evaluate();
+          const changed = this.engine.onDelta(delta);
+          // Re-evaluate only when a value actually changed: the engine
+          // reports per-path value changes, so a stream of identical
+          // re-broadcasts costs no evaluation. Staleness ages on
+          // regardless via the timer tick.
+          if (changed.size > 0) this.engine.evaluate();
         } catch (err) {
           fail("evaluating delta", err);
         }

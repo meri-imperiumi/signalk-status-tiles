@@ -41,6 +41,29 @@ function delta(path, value, ts = Date.now()) {
 }
 
 describe("engine", () => {
+  test("onDelta reports only values that actually changed", () => {
+    const e = createEngine(anchorConfig(), () => {});
+    // First sighting: the path is new, so it counts as changed.
+    assert.ok(
+      e.onDelta(delta("navigation.state", "sailing")).has("navigation.state"),
+    );
+    // Identical re-broadcast (the common case at a minPeriod cadence):
+    // no change, callers skip the re-evaluation. Freshness still
+    // updates — verified by evaluating later without a stale flip.
+    assert.equal(e.onDelta(delta("navigation.state", "sailing")).size, 0);
+    // An actual value change is reported again.
+    assert.ok(
+      e.onDelta(delta("navigation.state", "anchored")).has("navigation.state"),
+    );
+    // Meta-only deltas never count as changes.
+    assert.equal(
+      e.onDelta({
+        updates: [{ meta: [{ path: "navigation.state", value: {} }] }],
+      }).size,
+      0,
+    );
+  });
+
   test("off-anchor tile is hidden entirely (SPEC §5, revised)", () => {
     const out = [];
     const e = createEngine(anchorConfig(), (tiles) => {
