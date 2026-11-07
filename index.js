@@ -25,6 +25,7 @@
 
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { registerPlotterExtension } from "./plotterext.js";
 import { validateConfig } from "./public/lib/config.js";
 import { CONFIG_HASH_PATH, canonicalJson } from "./public/lib/config-hash.js";
 import { createEngine } from "./public/lib/engine.js";
@@ -32,7 +33,9 @@ import { mergeIntoConfig } from "./public/lib/examples.js";
 import { collectPaths, unwrapConfig } from "./public/lib/paths.js";
 import { buildSchema } from "./public/lib/schema.js";
 import {
+  TILE_DISPLAY_VALUE_DESCRIPTION,
   TILE_STATUS_DESCRIPTION,
+  tileDisplayValuePath,
   tileStatusPath,
 } from "./public/lib/status-paths.js";
 
@@ -103,7 +106,8 @@ export default function (app) {
   const unsubscribes = [];
   /** @type {ReturnType<typeof setInterval>|null} staleness tick */
   let evalTimer = null;
-  /** @type {Map<string, string|null>} last status published per tile id */
+  /** @type {Map<string, string|null>} last status published per bus key
+   *  — tile id for the state string, `"<id>|dv"` for its display value */
   const lastPublished = new Map();
   /** @type {number} Date.now() of the last engine evaluation */
   let lastEvalAt = 0;
@@ -122,6 +126,10 @@ export default function (app) {
   let running = false;
   /** @type {boolean} resource provider registered with the server */
   let providerRegistered = false;
+  /** @type {boolean} plotter-extension provider registered with the server */
+  let plotterExtRegistered = false;
+  /** @type {Function|null} plotter-extension teardown (empties the listing) */
+  let plotterExtTeardown = null;
   /**
    * The `restart` callback `start(config, restart)` receives, captured
    * so the examples copy route can re-apply a merged config in-memory
@@ -197,6 +205,28 @@ export default function (app) {
   }
 
   /**
+   * Registers the plotter-extension provider (read-only, running-gated).
+   * Idempotent per plugin instance — a re-start reuses the existing
+   * registration; the manifest itself is rebuilt from the live config
+   * on every provider call, so tile edits are reflected without
+   * re-registering. Skipped silently on servers without the resource
+   * provider registry (older servers): no plotter host can discover
+   * the extension there, so there is nothing to advertise.
+   */
+  function registerPlotterExtensionProvider() {
+    if (plotterExtRegistered) return;
+    if (typeof app.registerResourceProvider !== "function") return;
+    plotterExtTeardown = registerPlotterExtension(app, {
+      id: PLUGIN_ID,
+      getTiles: () => {
+        const cfg = unwrapConfig(pluginConfig);
+        return Array.isArray(cfg?.tiles) ? cfg.tiles : [];
+      },
+    });
+    plotterExtRegistered = true;
+  }
+
+  /**
    * Tears down the server-side evaluation: stops the tick, drops the
    * subscription, and optionally nulls the published statuses so
    * consumers don't keep rendering the last state of a gone tile.
@@ -221,8 +251,12 @@ export default function (app) {
     if (publishClears) {
       const values = [];
       for (const tile of tiles) {
-        if (lastPublished.get(tile.id) == null) continue;
-        values.push({ path: tileStatusPath(tile.id), value: null });
+        if (lastPublished.get(tile.id) != null) {
+          values.push({ path: tileStatusPath(tile.id), value: null });
+        }
+        if (lastPublished.get(displayKey(tile.id)) != null) {
+          values.push({ path: tileDisplayValuePath(tile.id), value: null });
+        }
       }
       if (values.length > 0) publishStatusValues(values);
     }
@@ -281,21 +315,38 @@ export default function (app) {
   }
 
   /**
-   * Engine output callback: publishes each tile's state as a plain
-   * string, change-driven. Tiles hidden by an inactive context (SPEC
-   * §5, revised) are absent from the output — publish null for them
-   * rather than letting the last state linger on the bus.
+   * Bus key under which a tile's display value is change-tracked.
+   * @param {string} id - tile id
+   * @returns {string}
+   */
+  function displayKey(id) {
+    return `${id}|dv`;
+  }
+
+  /**
+   * Engine output callback: publishes each tile's state (and headline
+   * display value, SPEC §3.4) as plain scalars, change-driven. Tiles
+   * hidden by an inactive context (SPEC §5, revised) are absent from
+   * the output — publish null for them rather than letting the last
+   * state linger on the bus.
    *
-   * @param {Array<{id: string, state: string}>} tileOut
+   * @param {Array<{id: string, state: string, displayValue?: string}>} tileOut
    */
   function onEngineEval(tileOut) {
-    const byId = new Map(tileOut.map((t) => [t.id, t.state]));
+    const byId = new Map(tileOut.map((t) => [t.id, t]));
     const values = [];
     for (const tile of tiles) {
-      const state = byId.get(tile.id) ?? null;
-      if (lastPublished.get(tile.id) === state) continue;
-      lastPublished.set(tile.id, state);
-      values.push({ path: tileStatusPath(tile.id), value: state });
+      const t = byId.get(tile.id) ?? null;
+      const state = t?.state ?? null;
+      if (lastPublished.get(tile.id) !== state) {
+        lastPublished.set(tile.id, state);
+        values.push({ path: tileStatusPath(tile.id), value: state });
+      }
+      const dv = t?.displayValue ?? null;
+      if (lastPublished.get(displayKey(tile.id)) !== dv) {
+        lastPublished.set(displayKey(tile.id), dv);
+        values.push({ path: tileDisplayValuePath(tile.id), value: dv });
+      }
     }
     if (values.length > 0) publishStatusValues(values);
   }
@@ -348,13 +399,22 @@ export default function (app) {
       context: "vessels.self",
       updates: [
         {
-          meta: tileList.map((t) => ({
-            path: tileStatusPath(t.id),
-            value: {
-              displayName: `${t.label || t.id} status`,
-              description: TILE_STATUS_DESCRIPTION,
+          meta: tileList.flatMap((t) => [
+            {
+              path: tileStatusPath(t.id),
+              value: {
+                displayName: `${t.label || t.id} status`,
+                description: TILE_STATUS_DESCRIPTION,
+              },
             },
-          })),
+            {
+              path: tileDisplayValuePath(t.id),
+              value: {
+                displayName: `${t.label || t.id} display value`,
+                description: TILE_DISPLAY_VALUE_DESCRIPTION,
+              },
+            },
+          ]),
         },
       ],
     });
@@ -427,6 +487,9 @@ export default function (app) {
       // per instance; running-gated). Other plugins' sets are discovered
       // by the webapp via the resources API — nothing to do here for those.
       registerExamplesProvider();
+      // Plotter-extension provider: one widget per configured tile,
+      // manifest rebuilt from the live config on every provider call.
+      registerPlotterExtensionProvider();
       // Public config endpoint. Mounted on the app (not the plugin
       // router) so anonymous/read-only clients can load it; see
       // CONFIG_PATH. Registered in start() so the route is live only
@@ -464,6 +527,11 @@ export default function (app) {
       pluginConfigHash = null;
       running = false;
       restartFn = null;
+      // Empties the plotterExtensions listing so hosts tear the widget
+      // contexts down (the static asset mount stays; Express has no
+      // unmount, and the files are inert).
+      plotterExtTeardown?.();
+      plotterExtTeardown = null;
       setStatus?.("Stopped");
     },
 

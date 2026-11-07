@@ -6,6 +6,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Plotter-extension support (Plotter Extensions API v1 — Freeboard-SK
+  and compatible chart plotters): the plugin now registers a
+  `plotterExtensions` resource provider whose manifest exposes one
+  glanceable widget per configured tile, so the user can pick the
+  tiles they care about into the plotter's own widget grid. The
+  manifest is rebuilt from the live config on every provider call —
+  tile edits (added, removed, renamed, resized) are reflected without
+  re-registration, widget ids are stable per tile, and the provider
+  goes empty on plugin stop so hosts tear the widget contexts down.
+  The widget (`/plotterext/signalk-status-tiles/tile-ext-widget.html
+  ?tile=<id>`) renders the tile in the webapp's visual language (flat
+  panel, corner brackets, theme colors, red-only pulse) as a pure view
+  over the published scalars — no evaluation runs in the widget. It
+  subscribes to the tile's state and display-value paths through the
+  host's Signal K relay, bootstraps current values via REST (bus
+  deltas are change-driven; a quiet green tile must not sit at NO
+  DATA), follows the host's night mode, and re-fetches its label when
+  the config hash changes. Long-press opens the host's config/remove
+  dialog.
+- Each tile's headline display value (SPEC §3.4) is now published on
+  the bus beside the state string, as a sibling scalar
+  `statusTiles.tiles.<id>.displayValue` (the state path stays a plain
+  string leaf). Published change-driven like the state, null when the
+  tile has no display check or is context-hidden, the stale "—"
+  marker when the display input went stale — instrument panels and
+  other Signal K consumers can render "House Bank 92%" without
+  re-running the evaluation engine. Path metadata (displayName
+  "<label> display value") is published alongside the existing state
+  metadata.
+
 ## [0.6.5] - 2026-10-15
 
 ### Changed

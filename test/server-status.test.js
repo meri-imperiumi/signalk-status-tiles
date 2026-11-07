@@ -15,6 +15,7 @@ import pluginFactory from "../index.js";
 import { collectPaths } from "../public/lib/paths.js";
 import {
   TILE_STATUS_BASE,
+  tileDisplayValuePath,
   tileStatusPath,
 } from "../public/lib/status-paths.js";
 
@@ -147,10 +148,18 @@ test("start sends metadata for every tile status path", (t) => {
     }
   }
   const paths = metas.map((m) => m.path).sort();
-  assert.deepEqual(paths, [tileStatusPath("anchor"), tileStatusPath("soc")]);
+  assert.deepEqual(paths, [
+    tileStatusPath("anchor"),
+    tileDisplayValuePath("anchor"),
+    tileStatusPath("soc"),
+    tileDisplayValuePath("soc"),
+  ]);
   const socMeta = metas.find((m) => m.path === tileStatusPath("soc"));
   assert.equal(socMeta.value.displayName, "Battery status");
   assert.ok(socMeta.value.description.includes("opportunity"));
+  const socDvMeta = metas.find((m) => m.path === tileDisplayValuePath("soc"));
+  assert.equal(socDvMeta.value.displayName, "Battery display value");
+  assert.ok(socDvMeta.value.description.includes("stale"));
 });
 
 test("subscribes to every config-referenced path", (t) => {
@@ -305,4 +314,66 @@ test("tolerates servers without subscriptionmanager", (t) => {
   // Only the initial (empty-cache) evaluation happens; no crash
   assert.doesNotThrow(() => plugin.start(SAMPLE));
   assert.equal(latest(app).get("soc"), "neutral");
+});
+
+/** Tiles for the display-value publication: one with a designated
+ *  display check (SPEC §3.4), one without. */
+const DISPLAY_SAMPLE = {
+  contexts: [],
+  tiles: [
+    {
+      id: "bilge",
+      label: "Bilge",
+      checks: [{ type: "boolean", path: "bilge", display: true }],
+    },
+    {
+      id: "plain",
+      label: "Plain",
+      checks: [{ type: "boolean", path: "plain" }],
+    },
+  ],
+};
+
+test("publishes the headline display value beside the state", (t) => {
+  t.mock.timers.enable({ now: Date.now() });
+  const app = fakeApp();
+  const plugin = pluginFactory(app);
+  t.after(() => plugin.stop());
+  plugin.start(DISPLAY_SAMPLE);
+
+  // Baseline: absent input => neutral; the designated display check is
+  // stale, and evalTile normalizes a stale display value to the explicit
+  // "unknown" marker — never the frozen last reading (SPEC §3.4).
+  assert.equal(latest(app).get("bilge"), "neutral");
+  assert.equal(latest(app).get("bilge.displayValue"), "—");
+
+  t.mock.timers.tick(2_000); // open the throttle window (see above)
+  // false is the good state (badWhen default true) => green, "OK"
+  app.feed(delta("bilge", false));
+  assert.equal(latest(app).get("bilge"), "green");
+  assert.equal(latest(app).get("bilge.displayValue"), "OK");
+
+  // true is bad => red, "NOT OK" (the change coalesces; the trailing
+  // evaluation lands when the throttle window opens)
+  app.feed(delta("bilge", true));
+  t.mock.timers.tick(2_000);
+  assert.equal(latest(app).get("bilge"), "red");
+  assert.equal(latest(app).get("bilge.displayValue"), "NOT OK");
+
+  // A tile without a display check never publishes one
+  app.feed(delta("plain", false));
+  t.mock.timers.tick(2_000);
+  assert.equal(latest(app).get("plain"), "green");
+  const plainDvs = statusValues(app).filter(
+    (v) => v.path === tileDisplayValuePath("plain"),
+  );
+  assert.deepEqual(
+    plainDvs.map((v) => v.value),
+    [null],
+  );
+
+  // Stop clears both scalars
+  plugin.stop();
+  assert.equal(latest(app).get("bilge"), null);
+  assert.equal(latest(app).get("bilge.displayValue"), null);
 });

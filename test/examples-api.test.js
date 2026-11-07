@@ -48,8 +48,9 @@ const EXAMPLE_SET = {
  * every such round-trip nests the stored config one level deeper.
  */
 function fakeApp({ storedOptions = SAMPLE } = {}) {
-  /** @type {object|null} the resource provider registered, if any */
-  let provider = null;
+  /** @type {object[]} every resource provider registered (the plugin
+   *  registers both its examples set and the plotter extension) */
+  const providers = [];
   /** @type {object} the server's own envelope: { configuration, enabled } */
   let envelope = {
     configuration: structuredClone(storedOptions),
@@ -65,7 +66,11 @@ function fakeApp({ storedOptions = SAMPLE } = {}) {
   const messages = [];
   return {
     messages,
-    provider: () => provider,
+    /** The statusTileExamples provider — this file's subject. (The
+     *  plugin also registers a plotterExtensions provider now; it is
+     *  covered by plotterext.test.js.) */
+    provider: () =>
+      providers.find((p) => p.type === "statusTileExamples") ?? null,
     routerRoutes,
     /** The bare persisted config (`envelope.configuration`) — what most
      * tests actually want to assert against. */
@@ -89,7 +94,7 @@ function fakeApp({ storedOptions = SAMPLE } = {}) {
       },
     },
     registerResourceProvider(p) {
-      provider = p;
+      providers.push(p);
     },
     readPluginOptions: () => structuredClone(envelope),
     savePluginOptions: (bareConfig, cb) => {

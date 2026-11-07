@@ -43,7 +43,31 @@ export function tileStatusPath(id) {
 }
 
 /**
+ * Path of a tile's published headline display value (SPEC §3.4),
+ * relative to `vessels.self` — a sibling of the tile's status path.
+ * The string state stays a plain leaf (SPEC §6: any consumer can read
+ * tile status without this plugin's webapp); the display value rides
+ * beside it as its own scalar so instrument panels and plotter widgets
+ * (public/tile-ext-widget.js) can show "House Bank 92%" without
+ * re-running the evaluation engine. Published as a plain formatted
+ * string (the check type owns formatting), null when the tile has no
+ * display value or its context is inactive.
+ *
+ * @param {string} id - tile id
+ * @returns {string}
+ */
+export function tileDisplayValuePath(id) {
+  return `${tileStatusPath(id)}.displayValue`;
+}
+
+/**
  * Metadata description for the published status paths, used by the
  * server when it sends path metadata (displayName/description).
  */
 export const TILE_STATUS_DESCRIPTION = `Current Status Tiles state: one of ${TILE_STATES.map((s) => `"${s}"`).join(", ")}, or null while the tile's context is inactive or the plugin is stopped`;
+
+/**
+ * Metadata description for the published display-value paths (SPEC
+ * §3.4), used by the server when it sends path metadata.
+ */
+export const TILE_DISPLAY_VALUE_DESCRIPTION = `Current Status Tiles headline display value for the tile (SPEC 3.4), formatted by the tile's display check; null when the tile has none, its display input is stale, its context is inactive, or the plugin is stopped`;
