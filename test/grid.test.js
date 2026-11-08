@@ -18,14 +18,10 @@ globalThis.document = {
   createElement: () => ({ classList: { add: () => {} } }),
 };
 
-const {
-  formatClock,
-  shortenReason,
-  lastSegment,
-  shortPath,
-  valueFit,
-  STATE_THEME,
-} = await import("../public/st-tile-grid.js");
+const { formatClock, shortPath, valueFit, STATE_THEME } = await import(
+  "../public/st-tile-grid.js"
+);
+const { lastSegment, shortenReason } = await import("../public/lib/util.js");
 
 test("state theme mapping: every lit state resolves to a spec theme class", () => {
   // amber rides the spec's orange ramp position, opportunity its own

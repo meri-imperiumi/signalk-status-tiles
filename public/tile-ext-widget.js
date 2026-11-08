@@ -25,7 +25,13 @@
  */
 
 import { CONFIG_HASH_PATH } from "./lib/config-hash.js";
-import { tileDisplayValuePath, tileStatusPath } from "./lib/status-paths.js";
+import { unwrapConfig } from "./lib/paths.js";
+import {
+  tileDisplayValuePath,
+  tileFooterPath,
+  tileReasonPath,
+  tileStatusPath,
+} from "./lib/status-paths.js";
 import { tileIdFromSearch, tileWidgetModel } from "./tile-ext-model.js";
 import { connectExtension } from "./vendor/plotterext-bus/extension.js";
 
@@ -35,8 +41,10 @@ const TILE_ID = tileIdFromSearch(window.location.search);
 /** Public config endpoint (same one the webapp boots from). */
 const CONFIG_URL = "/signalk/v2/api/status-tiles/configuration";
 /** REST bootstrap of the tile's current values (change-driven deltas
- * alone would leave a quiet tile at NO DATA until its next change). */
-const SELF_URL = "/signalk/v2/api/vessels/self";
+ * alone would leave a quiet tile at NO DATA until its next change).
+ * v1 — the read API every Signal K server serves; the v2 vessels
+ * namespace is newer than some installed servers' mirror. */
+const SELF_URL = "/signalk/v1/api/vessels/self";
 /** Config/REST fetch retries: a config edit restarts the plugin, and
  * fetches racing that restart see a 503 for a moment. */
 const FETCH_RETRIES = 4;
@@ -92,10 +100,11 @@ template.innerHTML = /* html */ `
     .tile {
       position: relative;
       display: grid;
-      grid-template-rows: auto 1fr auto;
+      grid-template-rows: auto 1fr auto auto;
       grid-template-areas:
         "label"
         "value"
+        "footer"
         "word";
       height: 100%;
       box-sizing: border-box;
@@ -132,9 +141,21 @@ template.innerHTML = /* html */ `
       border-bottom: 4px solid var(--c, var(--color-grey));
       border-right: 4px solid var(--c, var(--color-grey));
     }
+    /* Lit: the webapp grid's wash, but layered over an opaque panel —
+       the webapp tiles sit on the app's own black backdrop, while this
+       iframe floats over the chart, and a daylight chart seen through
+       a 0.16 tint washes the white value text out entirely (the same
+       low-contrast-screen divergence as the 4px border above). The
+       wash stays translucent-on-top so the theme hue reads through;
+       the panel underneath keeps the text contrast at chart-agnostic
+       levels. */
     .tile.lit {
       border-color: rgba(var(--c-rgb), 0.65);
-      background: rgba(var(--c-rgb), 0.16);
+      background-color: var(--bg-panel);
+      background-image: linear-gradient(
+        rgba(var(--c-rgb), 0.16),
+        rgba(var(--c-rgb), 0.16)
+      );
     }
     .tile.neutral {
       border-color: rgba(var(--color-grey-rgb), 0.5);
@@ -145,14 +166,24 @@ template.innerHTML = /* html */ `
     .tile.alarm {
       animation: pulse 1.6s ease-in-out infinite;
     }
+    /* Pulse animates the wash layer only (same-structure gradients
+       interpolate in modern hosts, snap elsewhere); the opaque panel
+       from .tile.lit stays put, so the alarm never goes translucent
+       over the chart either. */
     @keyframes pulse {
       0%, 100% {
         border-color: rgba(var(--c-rgb), 0.55);
-        background: rgba(var(--c-rgb), 0.12);
+        background-image: linear-gradient(
+          rgba(var(--c-rgb), 0.12),
+          rgba(var(--c-rgb), 0.12)
+        );
       }
       50% {
         border-color: rgba(var(--c-rgb), 1);
-        background: rgba(var(--c-rgb), 0.3);
+        background-image: linear-gradient(
+          rgba(var(--c-rgb), 0.3),
+          rgba(var(--c-rgb), 0.3)
+        );
       }
     }
     .label {
@@ -166,7 +197,11 @@ template.innerHTML = /* html */ `
       overflow-wrap: anywhere;
       min-width: 0;
     }
-    .tile.neutral .label { color: var(--color-grey); }
+    /* Neutral label in the muted text tone rather than the palette
+       grey: #666 on the near-black muted panel is under 3:1 — fine
+       for the deliberately-quiet brackets, too dim for words a crew
+       must read at glance distance. */
+    .tile.neutral .label { color: var(--text-muted); }
     .value {
       grid-area: value;
       align-self: center;
@@ -183,6 +218,29 @@ template.innerHTML = /* html */ `
       text-overflow: ellipsis;
     }
     .value:empty { display: none; }
+    /* Footer entries (SPEC §3.4): subordinate readouts under the
+       headline — the same label/value pairs the webapp grid renders.
+       Muted so the headline keeps the glance; values are the louder
+       half. Hidden when empty (the model yields []). */
+    .footer {
+      grid-area: footer;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      column-gap: 1.2em;
+      padding: 0.2em 0;
+      font-size: clamp(0.5rem, 2vh, 0.85rem);
+      font-weight: 700;
+      min-width: 0;
+      overflow: hidden;
+    }
+    .footer:empty { display: none; }
+    .footer .footer-label {
+      color: var(--text-muted);
+      margin-right: 0.4em;
+      font-weight: 400;
+    }
+    .footer .footer-value { color: #ffffff; }
     .word {
       grid-area: word;
       font-size: clamp(0.5rem, 2vh, 0.85rem);
@@ -199,6 +257,7 @@ template.innerHTML = /* html */ `
   <div class="tile">
     <div class="label" id="label">—</div>
     <div class="value" id="value"></div>
+    <div class="footer" id="footer"></div>
     <div class="word" id="word">NO DATA</div>
   </div>
 `;
@@ -217,6 +276,10 @@ class TileExtWidget extends HTMLElement {
     this.state = null;
     /** @type {string|null} last published display value */
     this.displayValue = null;
+    /** @type {string|null} last published reason line */
+    this.reason = null;
+    /** @type {string|null} last published footer scalar (JSON string) */
+    this.footerJson = null;
     this.connected = false;
 
     // Long-press → host config/remove dialog (pointer events inside the
@@ -285,6 +348,8 @@ class TileExtWidget extends HTMLElement {
           [
             tileStatusPath(TILE_ID),
             tileDisplayValuePath(TILE_ID),
+            tileReasonPath(TILE_ID),
+            tileFooterPath(TILE_ID),
             CONFIG_HASH_PATH,
           ],
           (ev) => {
@@ -293,6 +358,10 @@ class TileExtWidget extends HTMLElement {
               this.state = typeof ev.value === "string" ? ev.value : null;
             } else if (path === tileDisplayValuePath(TILE_ID)) {
               this.displayValue = ev.value == null ? null : String(ev.value);
+            } else if (path === tileReasonPath(TILE_ID)) {
+              this.reason = ev.value == null ? null : String(ev.value);
+            } else if (path === tileFooterPath(TILE_ID)) {
+              this.footerJson = ev.value == null ? null : String(ev.value);
             } else if (path === CONFIG_HASH_PATH) {
               // A config edit restarts the plugin and republishes the
               // hash; a differing hash re-fetches the label (the tile's
@@ -352,7 +421,10 @@ class TileExtWidget extends HTMLElement {
     if (!TILE_ID) return;
     try {
       const body = await fetchRetry(CONFIG_URL);
-      const cfg = body?.config ?? body;
+      // The endpoint mirrors the config the server handed the plugin,
+      // which may be the server's own {configuration, enabled} envelope
+      // — unwrap like every other config consumer (paths.js).
+      const cfg = unwrapConfig(body?.config ?? body);
       const tile = (cfg?.tiles ?? []).find((t) => t?.id === TILE_ID);
       this.label = tile?.label || TILE_ID;
       this.configHash =
@@ -369,8 +441,8 @@ class TileExtWidget extends HTMLElement {
   /**
    * Fetches the tile's currently-published values over the REST API —
    * the boot-time snapshot that change-driven bus deltas never replay.
-   * Two leaf reads (state, display value); a missing leaf (tile not
-   * published yet, 404) just leaves that field unset.
+   * Leaf reads (state, display value, reason, footer); a missing leaf
+   * (tile not published yet, 404) just leaves that field unset.
    *
    * @returns {Promise<void>}
    */
@@ -393,6 +465,10 @@ class TileExtWidget extends HTMLElement {
     if (typeof state === "string") this.state = state;
     const dv = await readLeaf(tileDisplayValuePath(TILE_ID));
     this.displayValue = dv == null ? null : String(dv);
+    const reason = await readLeaf(tileReasonPath(TILE_ID));
+    this.reason = reason == null ? null : String(reason);
+    const footer = await readLeaf(tileFooterPath(TILE_ID));
+    this.footerJson = footer == null ? null : String(footer);
   }
 
   /**
@@ -405,6 +481,8 @@ class TileExtWidget extends HTMLElement {
       label: this.label,
       state: this.state,
       displayValue: this.displayValue,
+      reason: this.reason,
+      footerJson: this.footerJson,
     });
     const root = this.shadowRoot;
     const tile = root.querySelector(".tile");
@@ -414,6 +492,24 @@ class TileExtWidget extends HTMLElement {
     root.querySelector("#label").textContent = model.label;
     root.querySelector("#value").textContent = model.value;
     root.querySelector("#word").textContent = model.word;
+    // Footer entries mirror the config-derived array (the webapp grid's
+    // #paintFooter); the container is empty when the tile has none, and
+    // :empty hides it. Rebuild per render — entries are few and this is
+    // a change-driven scalar, not a per-second tick.
+    const footer = root.querySelector("#footer");
+    footer.replaceChildren();
+    for (const entry of model.footer) {
+      const item = document.createElement("span");
+      item.className = "footer-item";
+      const lab = document.createElement("span");
+      lab.className = "footer-label";
+      lab.textContent = entry.label;
+      const val = document.createElement("span");
+      val.className = "footer-value";
+      val.textContent = entry.value;
+      item.append(lab, val);
+      footer.append(item);
+    }
   }
 }
 

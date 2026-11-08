@@ -37,6 +37,7 @@
  * @file st-tile-grid.js */
 
 import { shipTime } from "./lib/timezone.js";
+import { shortenReason } from "./lib/util.js";
 
 /**
  * Tile state → spec theme class (signalk-visuals.md §5). The class
@@ -1244,31 +1245,6 @@ export function valueFit(s) {
   const len = String(s).length;
   if (len <= 7) return "s";
   return len <= 12 ? "m" : "l";
-}
-
-/**
- * Last dot-segment of a path — the differing tail is all a helm display
- * needs; the shared prefix is noise on a glanceable reason line.
- */
-export function lastSegment(p) {
-  const parts = String(p).split(".");
-  return parts[parts.length - 1];
-}
-
-/**
- * Shortens every Signal-K-path token in a reason string to its last
- * dot-segment, leaving the surrounding words/operators intact. A
- * reason like `...deployment.flinsail.detectedstate ≠ ...recommendedstate`
- * becomes `detectedstate ≠ recommendedstate` — the shared prefix is the
- * same for both sides, so only the differing tail is glanceable. Single
- * segments, numbers, and plain words are left alone (they are already
- * short or are not paths). Applied before uppercasing.
- */
-export function shortenReason(text) {
-  return String(text).replace(
-    /[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+/g,
-    (m) => lastSegment(m),
-  );
 }
 
 /**

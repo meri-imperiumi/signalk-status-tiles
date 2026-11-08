@@ -61,6 +61,37 @@ export function tileDisplayValuePath(id) {
 }
 
 /**
+ * Path of a tile's published reason line — a sibling scalar beside the
+ * status and display-value paths. The short human string naming which
+ * check produced the current state (SPEC §6 output #1); the webapp
+ * renders it under the headline on non-green tiles, and so does the
+ * plotter widget. Published as-is (the render side shortens path
+ * tokens); null when the tile's context is inactive.
+ *
+ * @param {string} id - tile id
+ * @returns {string}
+ */
+export function tileReasonPath(id) {
+  return `${tileStatusPath(id)}.reason`;
+}
+
+/**
+ * Path of a tile's published footer entries — a sibling scalar carrying
+ * the tile's subordinate readouts (SPEC §3.4 footer: "Remaining 26.8
+ * liter" under a headline). The array-of-{label,value} the engine
+ * produces doesn't fit a scalar leaf, so it rides as a JSON string;
+ * consumers parse it and render label/value pairs. null when the tile
+ * has no footer entries (no config, or all inputs absent) or its
+ * context is inactive.
+ *
+ * @param {string} id - tile id
+ * @returns {string}
+ */
+export function tileFooterPath(id) {
+  return `${tileStatusPath(id)}.footer`;
+}
+
+/**
  * Metadata description for the published status paths, used by the
  * server when it sends path metadata (displayName/description).
  */
@@ -71,3 +102,37 @@ export const TILE_STATUS_DESCRIPTION = `Current Status Tiles state: one of ${TIL
  * §3.4), used by the server when it sends path metadata.
  */
 export const TILE_DISPLAY_VALUE_DESCRIPTION = `Current Status Tiles headline display value for the tile (SPEC 3.4), formatted by the tile's display check; null when the tile has none, its display input is stale, its context is inactive, or the plugin is stopped`;
+
+/**
+ * Metadata description for the published reason paths, used by the
+ * server when it sends path metadata.
+ */
+export const TILE_REASON_DESCRIPTION = `Current Status Tiles reason line for the tile: which check produced the current state, in plain words; null when the tile's context is inactive or the plugin is stopped`;
+
+/**
+ * Metadata description for the published footer paths, used by the
+ * server when it sends path metadata.
+ */
+export const TILE_FOOTER_DESCRIPTION = `Current Status Tiles footer entries for the tile (SPEC 3.4), as a JSON string of {label, value} objects; null when the tile has no footer entries, its context is inactive, or the plugin is stopped`;
+
+/** Parses a published footer scalar back into its entries. Shared by
+ * every render surface so the JSON-string contract has one parser.
+ * Anything but a JSON array of {label, value} string pairs parses as
+ * an empty array — a corrupt scalar must not blank or crash a tile.
+ *
+ * @param {string|null} json - the published footer scalar
+ * @returns {Array<{label: string, value: string}>}
+ */
+export function parseFooterEntries(json) {
+  if (typeof json !== "string" || json.length === 0) return [];
+  try {
+    const parsed = JSON.parse(json);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (e) =>
+        e != null && typeof e.label === "string" && typeof e.value === "string",
+    );
+  } catch {
+    return [];
+  }
+}

@@ -86,7 +86,16 @@ export function createEngine(config, onEval, options = {}) {
         if (!prev || prev.value !== v.value) changed.add(v.path);
       }
       for (const m of update.meta || []) {
-        cache.setMeta(m.path, m.value);
+        // Meta deltas are SPARSE updates (Signal K convention): merge
+        // over the cached entry rather than replacing it. The cache may
+        // already hold metadata from other sources (server-side seeding:
+        // zones from the boat's baseDeltas, displayUnits from the unit
+        // preferences) — a partial delta carrying, say, just a
+        // displayName must not wipe those out.
+        cache.setMeta(m.path, {
+          ...(cache.metaFor(m.path) ?? {}),
+          ...m.value,
+        });
       }
     }
     return changed;

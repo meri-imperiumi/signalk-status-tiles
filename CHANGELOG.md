@@ -27,6 +27,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   DATA), follows the host's night mode, and re-fetches its label when
   the config hash changes. Long-press opens the host's config/remove
   dialog.
+- Each tile's reason line and footer entries (SPEC §6 output #1) are
+  now published on the bus beside the state and display-value paths, so
+  the plotter widget can render the full tile the webapp shows: a
+  `statusTiles.tiles.<id>.reason` string leaf carries the short human
+  reason naming which check produced the state ("CURRENTLEVEL WARN"),
+  and `statusTiles.tiles.<id>.footer` carries the tile's subordinate
+  readouts ("Remaining 26.8 liter") as a JSON string of {label, value}
+  objects (parseFooterEntries is the shared parser). Both publish
+  change-driven like the other scalars and go null when the tile's
+  context is inactive or the plugin stops. The widget renders the
+  footer as a muted label/value row under the headline and shows the
+  reason in its bottom slot on non-green tiles (webapp parity), keeping
+  the glance word on green/neutral ones.
+- The plotter widget's bottom line now shows the tile's published
+  reason (path tokens shortened, uppercased) on amber/red/opportunity
+  tiles instead of the compressed glance word — mirroring the webapp
+  grid's reason slot; green/neutral keep "OK"/"N/A".
 - Each tile's headline display value (SPEC §3.4) is now published on
   the bus beside the state string, as a sibling scalar
   `statusTiles.tiles.<id>.displayValue` (the state path stays a plain
@@ -37,6 +54,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-running the evaluation engine. Path metadata (displayName
   "<label> display value") is published alongside the existing state
   metadata.
+
+### Fixed
+
+- The plotter widget's lit tiles no longer wash out over a bright
+  daylight chart: the tile background was a bare 16%-alpha theme tint
+  over the transparent iframe, so a light chart turned it pastel and
+  the white value text vanished. The wash now layers over the opaque
+  dark panel (the same treatment the dead-reckoning family widgets
+  apply at the host root), keeping the lit hue readable at chart-
+  agnostic contrast; the red pulse animates the wash layer only, so
+  alarm tiles never go translucent over the chart either. The neutral
+  tile's label renders in the muted text tone rather than the dimmer
+  palette grey, matching glance-distance legibility. The widget now
+  unwraps the server's config envelope when fetching its tile label
+  (a server that hands the plugin the `{configuration, enabled}`
+  wrapper made every widget fall back to its raw tile id as the
+  label — "TRIP" instead of "Trip log"). The value bootstrap likewise
+  read from `/signalk/v2/api/vessels/self`, which servers up to 2.29
+  don't serve — every boot-time value read failed there, leaving quiet
+  tiles at NO DATA until their next change; it now uses the v1 read
+  API.
+- Published display values now match the webapp's formatting. The
+  plugin's engine cache never received path metadata (the webapp gets
+  it replayed via the stream's `sendMeta=all`, but the plugin's
+  subscription deltas don't carry a replay), so every meta-dependent
+  decision degraded on the bus: raw SI numbers instead of unit-
+  converted headlines ("4307" instead of "2.3 nmi", "surplus 0.84
+  ratio" instead of "surplus 85%"), and zone checks without inline
+  zones stuck at neutral "N/A" where the webapp classified amber from
+  the path's published zones. The plugin now seeds its cache from
+  three layered sources, most-live-wins per field: the path-metadata
+  registry (`app.getMetadata`, released servers), the server's own
+  loopback REST meta answer (`GET /vessels/self/meta` — the live
+  tree's zones plus each path's server-resolved displayUnits, the
+  same answer the webapp's WS meta carries; fetched once per start
+  with a bounded retry, degrading silently on secured servers), and
+  the direct `app.getDisplayUnits()` plugin API when present (Oct
+  2026 servers). Because the vessel tree is still filling at plugin
+  start (the first boot-time answer can lack metadata that lands
+  seconds later), the REST answer is re-fetched on a short schedule
+  (30s/120s) and every landing re-seeds and re-publishes — values
+  only move when the formatting actually changed. A value arriving
+  for a path that still has no cached metadata (a tank level that
+  updates hourly, a sensor that wakes on change) triggers one
+  rate-limited refresh too, so late-first-data paths don't pin raw
+  numbers for the whole run. The plugin also re-seeds and re-publishes
+  when the server's unit preferences change; stream meta deltas merge
+  into the cached metadata instead of replacing it, so a sparse
+  republish (a displayName) can't wipe seeded zones or displayUnits;
+  and the loopback fetch carries a timeout, so a hung request lands
+  in the retry path instead of pinning the fallback in a pending
+  state.
 
 ## [0.6.5] - 2026-10-15
 

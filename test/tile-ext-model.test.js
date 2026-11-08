@@ -91,6 +91,84 @@ test("the glance word vocabulary stays closed and severity-honest", () => {
   ]);
 });
 
+test("a non-green reason replaces the glance word, webapp-style", () => {
+  // Parity with the webapp grid's reason slot: "CURRENTLEVEL WARN",
+  // not "TODAY", when the server published a reason for the state.
+  const m = tileWidgetModel({
+    label: "Fresh water",
+    state: "amber",
+    reason: "tanks.freshWater.currentLevel below 0.4",
+  });
+  assert.equal(m.word, "CURRENTLEVEL BELOW 0.4");
+  // Green keeps the glance word even when a reason exists — the webapp
+  // shows no reason on green tiles either.
+  const ok = tileWidgetModel({
+    label: "T",
+    state: "green",
+    reason: "ok",
+  });
+  assert.equal(ok.word, "OK");
+  // Neutral keeps its word too.
+  const na = tileWidgetModel({
+    label: "T",
+    state: "neutral",
+    reason: "input stale",
+  });
+  assert.equal(na.word, "N/A");
+  // A non-green state without a published reason (not yet received)
+  // falls back to the glance word.
+  const bare = tileWidgetModel({ label: "T", state: "amber" });
+  assert.equal(bare.word, "TODAY");
+});
+
+test("footer entries parse from the published JSON scalar", () => {
+  const m = tileWidgetModel({
+    label: "Fresh water",
+    state: "amber",
+    footerJson: JSON.stringify([
+      { label: "Remaining", value: "26.8 liter" },
+      { label: "Consumption", value: "11.7 l/day" },
+    ]),
+  });
+  assert.deepEqual(m.footer, [
+    { label: "Remaining", value: "26.8 liter" },
+    { label: "Consumption", value: "11.7 l/day" },
+  ]);
+  // No scalar yet, or the tile has no footer: empty (the widget hides
+  // the row via :empty).
+  assert.deepEqual(tileWidgetModel({ label: "T", state: "green" }).footer, []);
+  assert.deepEqual(
+    tileWidgetModel({ label: "T", state: "green", footerJson: null }).footer,
+    [],
+  );
+  // A corrupt scalar must not throw or blank the tile: honest empty.
+  assert.deepEqual(
+    tileWidgetModel({ label: "T", state: "green", footerJson: "{oops" }).footer,
+    [],
+  );
+  assert.deepEqual(
+    tileWidgetModel({
+      label: "T",
+      state: "green",
+      footerJson: JSON.stringify({ label: "not an array" }),
+    }).footer,
+    [],
+  );
+  // Entries missing a usable label/value are dropped, not surfaced.
+  assert.deepEqual(
+    tileWidgetModel({
+      label: "T",
+      state: "green",
+      footerJson: JSON.stringify([
+        { label: "Keep", value: "1" },
+        { label: 42, value: "2" },
+        null,
+      ]),
+    }).footer,
+    [{ label: "Keep", value: "1" }],
+  );
+});
+
 test("tileIdFromSearch reads the manifest's ?tile= contract", () => {
   assert.equal(tileIdFromSearch("?tile=soc"), "soc");
   assert.equal(tileIdFromSearch("?tile=anchor-watch"), "anchor-watch");

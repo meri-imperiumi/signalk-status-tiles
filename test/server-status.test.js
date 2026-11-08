@@ -16,11 +16,14 @@ import { collectPaths } from "../public/lib/paths.js";
 import {
   TILE_STATUS_BASE,
   tileDisplayValuePath,
+  tileFooterPath,
+  tileReasonPath,
   tileStatusPath,
 } from "../public/lib/status-paths.js";
 
 const SOC_PATH = "electrical.batteries.0.capacity.stateOfCharge";
 const WIND_PATH = "environment.wind.speedTrue";
+const TANK_PATH = "tanks.freshWater.water.currentLevel";
 
 const SAMPLE = {
   contexts: [
@@ -47,8 +50,13 @@ const SAMPLE = {
   ],
 };
 
-/** Fake ServerAPI with a subscriptionmanager stand-in (see server.test.js). */
-function fakeApp() {
+/** Fake ServerAPI with a subscriptionmanager stand-in (see server.test.js).
+ *  Optional `meta`: Map of path → {meta, displayUnits} the fake app
+ *  answers getMetadata()/getDisplayUnits() from (the seeded-metadata
+ *  tests). Optional `legacy: true` drops the plugin-side metadata APIs
+ *  entirely, mimicking a released server that predates them. Captures
+ *  unitpreferencesChanged listeners like the real EventEmitter does. */
+function fakeApp({ meta, legacy = false } = {}) {
   /** @type {Array<{id: string, msg: object}>} */
   const messages = [];
   /** @type {Array<object>} */
@@ -57,10 +65,16 @@ function fakeApp() {
   const unsubscribed = [];
   /** @type {Function|null} */
   let deltaCallback = null;
+  /** @type {Map<string, Function>} */
+  const prefsListeners = new Map();
   return {
     messages,
     subscriptions,
     unsubscribed,
+    /** Emits the unit-preferences change event to the plugin. */
+    emitPrefsChange() {
+      for (const l of prefsListeners.values()) l();
+    },
     feed(delta) {
       deltaCallback?.(delta);
     },
@@ -69,6 +83,16 @@ function fakeApp() {
     error: () => {},
     debug: () => {},
     get: () => {},
+    on: (event, l) => {
+      if (event === "unitpreferencesChanged") prefsListeners.set(l, l);
+    },
+    removeListener: (event, l) => {
+      if (event === "unitpreferencesChanged") prefsListeners.delete(l);
+    },
+    getMetadata: (path) =>
+      meta?.get(path.replace(/^vessels\.self\./, ""))?.meta,
+    getDisplayUnits: (path) => meta?.get(path)?.displayUnits,
+    ...(legacy ? { getMetadata: undefined, getDisplayUnits: undefined } : {}),
     handleMessage: (id, msg) => messages.push({ id, msg }),
     subscriptionmanager: {
       subscribe(subscription, unsubscribes, _onError, onDelta) {
@@ -151,8 +175,12 @@ test("start sends metadata for every tile status path", (t) => {
   assert.deepEqual(paths, [
     tileStatusPath("anchor"),
     tileDisplayValuePath("anchor"),
+    tileFooterPath("anchor"),
+    tileReasonPath("anchor"),
     tileStatusPath("soc"),
     tileDisplayValuePath("soc"),
+    tileFooterPath("soc"),
+    tileReasonPath("soc"),
   ]);
   const socMeta = metas.find((m) => m.path === tileStatusPath("soc"));
   assert.equal(socMeta.value.displayName, "Battery status");
@@ -160,6 +188,321 @@ test("start sends metadata for every tile status path", (t) => {
   const socDvMeta = metas.find((m) => m.path === tileDisplayValuePath("soc"));
   assert.equal(socDvMeta.value.displayName, "Battery display value");
   assert.ok(socDvMeta.value.description.includes("stale"));
+  const socReasonMeta = metas.find((m) => m.path === tileReasonPath("soc"));
+  assert.equal(socReasonMeta.value.displayName, "Battery reason");
+  const socFooterMeta = metas.find((m) => m.path === tileFooterPath("soc"));
+  assert.equal(socFooterMeta.value.displayName, "Battery footer");
+});
+
+test("seeded metadata reaches the engine cache (zones, units)", (t) => {
+  t.mock.timers.enable({ now: Date.now() });
+  // A zone check with NO inline zones: without seeded metadata the tile
+  // is stuck at neutral ("no zones defined"); with it, the path's
+  // published zones classify the value (SPEC §3.3).
+  const app = fakeApp({
+    meta: new Map([
+      [
+        "tanks.freshWater.level",
+        {
+          meta: {
+            units: "ratio",
+            zones: [
+              { state: "nominal", lower: 0.2 },
+              { state: "warn", lower: 0, upper: 0.2 },
+            ],
+          },
+          displayUnits: { formula: "value * 100", symbol: "%" },
+        },
+      ],
+    ]),
+  });
+  const plugin = pluginFactory(app);
+  t.after(() => plugin.stop());
+  plugin.start({
+    contexts: [],
+    tiles: [
+      {
+        id: "fw",
+        label: "Fresh water",
+        checks: [
+          { type: "zone", path: "tanks.freshWater.level", display: true },
+        ],
+      },
+    ],
+  });
+  t.mock.timers.tick(2_000); // open the throttle window (see above)
+  app.feed(delta("tanks.freshWater.level", 0.125));
+  assert.equal(latest(app).get("fw"), "amber");
+  // The headline is unit-converted by the seeded displayUnits, exactly
+  // what the webapp renders from its WS meta (0.125 is binary-exact, so
+  // the ×100 formula lands on 12.5).
+  assert.equal(latest(app).get("fw.displayValue"), "12.5%");
+});
+
+test("loopback REST meta fallback covers released servers", async (t) => {
+  // Released-server shape: no plugin-side metadata APIs at all; the
+  // server answers the loopback REST meta call with the live tree's
+  // metadata and resolved displayUnits — the same answer its WS meta
+  // carries, which is what the webapp formats from.
+  const realFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = realFetch;
+  });
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    // The user's TEMP config-endpoint probe fetches too; only the meta
+    // route is under test.
+    if (!u.endsWith("/signalk/v1/api/vessels/self/meta")) {
+      return { ok: true, json: async () => ({}) };
+    }
+    calls.push(u);
+    return {
+      ok: true,
+      json: async () => ({
+        "tanks.freshWater.currentLevel": {
+          units: "ratio",
+          zones: [
+            { state: "nominal", lower: 0.2 },
+            { state: "warn", lower: 0, upper: 0.2 },
+          ],
+          displayUnits: { formula: "value * 100", symbol: "%" },
+        },
+      }),
+    };
+  };
+  const app = fakeApp({ legacy: true });
+  app.config = { settings: { port: 3123 } };
+  const plugin = pluginFactory(app);
+  t.after(() => plugin.stop());
+  plugin.start({
+    contexts: [],
+    tiles: [
+      {
+        id: "fw",
+        label: "Fresh water",
+        checks: [
+          {
+            type: "zone",
+            path: "tanks.freshWater.currentLevel",
+            display: true,
+          },
+        ],
+      },
+    ],
+  });
+  // The value feeds the cache immediately; the fetch lands within
+  // milliseconds and its re-evaluation formats it — long before the
+  // delta throttle would have. (0.125 is binary-exact, so the ×100
+  // formula lands on 12.5.)
+  app.feed(delta("tanks.freshWater.currentLevel", 0.125));
+  await new Promise((r) => setTimeout(r, 20));
+
+  // The data-bearing path had no metadata (empty boot answer): the
+  // on-demand refresh fires at once, so calls >= 1 by now.
+  assert.ok(calls.length >= 1);
+  assert.ok(calls[0].endsWith("/signalk/v1/api/vessels/self/meta"));
+  // Zones classify where without metadata the tile sits at neutral.
+  assert.equal(latest(app).get("fw"), "amber");
+  // Headline unit-converted exactly like the webapp renders it.
+  assert.equal(latest(app).get("fw.displayValue"), "12.5%");
+});
+
+test("a failed loopback meta fetch degrades gracefully", async (t) => {
+  const realFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = realFetch;
+  });
+  globalThis.fetch = async () => {
+    throw new Error("connection refused");
+  };
+  const app = fakeApp({ legacy: true });
+  app.config = { settings: { port: 3123 } };
+  const plugin = pluginFactory(app);
+  t.after(() => plugin.stop());
+  plugin.start({
+    contexts: [],
+    tiles: [
+      {
+        id: "fw",
+        label: "Fresh water",
+        checks: [{ type: "zone", path: "tanks.freshWater.currentLevel" }],
+      },
+    ],
+  });
+  await new Promise((r) => setTimeout(r, 20));
+  // No metadata anywhere: the zone check sits at its neutral "no zones
+  // defined" answer and the plugin keeps publishing.
+  assert.equal(latest(app).get("fw"), "neutral");
+});
+
+test("a boot-race meta snapshot is upgraded by the refresh schedule", async (t) => {
+  // The plugin fetches at start, while the vessel tree is still filling:
+  // the first answer has no usable metadata; the settled tree (a later
+  // fetch) does. The refresh schedule must re-fetch, re-seed, and
+  // re-publish the re-formatted values.
+  t.mock.timers.enable({ now: Date.now() });
+  const realFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = realFetch;
+  });
+  const answers = [
+    {}, // boot-race snapshot: tree still filling
+    {
+      "tanks.freshWater.currentLevel": {
+        units: "ratio",
+        zones: [{ state: "warn", lower: 0, upper: 0.2 }],
+        displayUnits: { formula: "value * 100", symbol: "%" },
+      },
+    },
+  ];
+  let fetches = 0;
+  globalThis.fetch = async (url) => {
+    if (!String(url).endsWith("/signalk/v1/api/vessels/self/meta")) {
+      return { ok: true, json: async () => ({}) }; // TEMP probe traffic
+    }
+    fetches += 1;
+    return {
+      ok: true,
+      json: async () => answers[Math.min(fetches - 1, answers.length - 1)],
+    };
+  };
+  const app = fakeApp({ legacy: true });
+  app.config = { settings: { port: 3123 } };
+  const plugin = pluginFactory(app);
+  t.after(() => plugin.stop());
+  plugin.start({
+    contexts: [],
+    tiles: [
+      {
+        id: "fw",
+        label: "Fresh water",
+        checks: [
+          {
+            type: "zone",
+            path: "tanks.freshWater.currentLevel",
+            display: true,
+            // Long-stale: the 120s refresh tick must not double as a
+            // staleness flip — this test isolates the refresh behavior.
+            staleMs: 600_000,
+          },
+        ],
+      },
+    ],
+  });
+  app.feed(delta("tanks.freshWater.currentLevel", 0.125));
+  // The demand arrives while the boot fetch is in flight; it is queued
+  // and re-run the moment that fetch lands.
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  // The data-bearing path lacked metadata: the demand-forced refresh
+  // lands the settled tree — the zone check classifies without waiting
+  // for any schedule.
+  assert.equal(fetches, 2);
+  assert.equal(latest(app).get("fw"), "amber");
+  assert.equal(latest(app).get("fw.displayValue"), "12.5%");
+
+  // +30s: the boot fetch's tree-fill backstop fires and re-fetches the
+  // (now settled) tree; identical metadata and values stay change-driven
+  // silent. The forced fetch consumed the refresh budget, so no further
+  // ticks fetch anything.
+  const before = statusValues(app).length;
+  t.mock.timers.tick(30_000);
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  assert.equal(fetches, 3);
+  assert.equal(latest(app).get("fw"), "amber");
+  assert.equal(statusValues(app).length, before);
+});
+
+test("a unit-preferences change re-formats published display values", (t) => {
+  t.mock.timers.enable({ now: Date.now() });
+  const metaMap = new Map();
+  const app = fakeApp({ meta: metaMap });
+  const plugin = pluginFactory(app);
+  t.after(() => plugin.stop());
+  plugin.start({
+    contexts: [],
+    tiles: [
+      {
+        id: "soc",
+        label: "Battery",
+        checks: [{ type: "banded", path: SOC_PATH, display: true }],
+      },
+    ],
+  });
+  t.mock.timers.tick(2_000);
+  // 0.25 is binary-exact, so the seeded ×100 formula lands on 25.
+  app.feed(delta(SOC_PATH, 0.25));
+  // No metadata yet: the raw ratio with smart fallback precision.
+  assert.equal(latest(app).get("soc.displayValue"), "0.25");
+
+  // The user picks a unit preference: the plugin re-seeds and
+  // re-evaluates, and the next publish carries the new formatting.
+  metaMap.set(SOC_PATH, {
+    meta: {},
+    displayUnits: { formula: "value * 100", symbol: "%" },
+  });
+  app.emitPrefsChange();
+  assert.equal(latest(app).get("soc.displayValue"), "25.0%");
+
+  // The listener is plugin-lifecycle-scoped: stop removes it, so a late
+  // preferences change neither re-publishes nor crashes.
+  plugin.stop();
+  const publishes = statusValues(app).length;
+  app.emitPrefsChange();
+  assert.equal(statusValues(app).length, publishes);
+});
+
+test("reason and footer ride beside the status as siblings", (t) => {
+  t.mock.timers.enable({ now: Date.now() });
+  const app = fakeApp();
+  const plugin = pluginFactory(app);
+  t.after(() => plugin.stop());
+  plugin.start({
+    contexts: [],
+    tiles: [
+      {
+        id: "fw",
+        label: "Fresh water",
+        checks: [
+          {
+            type: "banded",
+            path: "tanks.freshWater.level",
+            low: { warn: 0.4 },
+          },
+        ],
+        footer: [{ label: "Remaining", path: "tanks.freshWater.remaining" }],
+      },
+    ],
+  });
+  t.mock.timers.tick(2_000);
+  app.feed(delta("tanks.freshWater.level", 0.13));
+  app.feed(delta("tanks.freshWater.remaining", 0.0268));
+  t.mock.timers.tick(2_000);
+
+  // Amber with the check's reason line, formatted like the webapp
+  // renders it (the render side shortens path tokens).
+  assert.equal(latest(app).get("fw"), "amber");
+  assert.ok(latest(app).get("fw.reason").includes("below 0.4"));
+  // Footer entries ride as a JSON string of {label, value} pairs; the
+  // remaining volume (a ratio path) is formatted per fallback rules.
+  const footer = JSON.parse(latest(app).get("fw.footer"));
+  assert.deepEqual(footer, [{ label: "Remaining", value: "0.03" }]);
+
+  // Change-driven: an unchanged footer never republishes.
+  const before = statusValues(app).filter(
+    (v) => v.path === tileFooterPath("fw"),
+  ).length;
+  app.feed(delta("tanks.freshWater.remaining", 0.0269));
+  t.mock.timers.tick(2_000);
+  const after = statusValues(app).filter(
+    (v) => v.path === tileFooterPath("fw"),
+  ).length;
+  assert.equal(after, before);
+
+  // Stop clears the siblings like the rest.
+  plugin.stop();
+  assert.equal(latest(app).get("fw.reason"), null);
+  assert.equal(latest(app).get("fw.footer"), null);
 });
 
 test("subscribes to every config-referenced path", (t) => {
@@ -376,4 +719,120 @@ test("publishes the headline display value beside the state", (t) => {
   plugin.stop();
   assert.equal(latest(app).get("bilge"), null);
   assert.equal(latest(app).get("bilge.displayValue"), null);
+});
+
+test("a meta delta merges over seeded metadata instead of replacing it", (t) => {
+  t.mock.timers.enable({ now: Date.now() });
+  const app = fakeApp({
+    meta: new Map([
+      [
+        SOC_PATH,
+        {
+          meta: { units: "ratio" },
+          displayUnits: { formula: "value * 100", symbol: "%" },
+        },
+      ],
+    ]),
+  });
+  const plugin = pluginFactory(app);
+  t.after(() => plugin.stop());
+  plugin.start({
+    contexts: [],
+    tiles: [
+      {
+        id: "soc",
+        label: "Battery",
+        checks: [
+          { type: "banded", path: SOC_PATH, low: { warn: 0.4 }, display: true },
+        ],
+      },
+    ],
+  });
+  t.mock.timers.tick(2_000); // open the throttle window (see above)
+
+  // A provider re-publishes sparse meta for the same path (say, just a
+  // displayName): the seeded displayUnits must survive the merge —
+  // replacing the entry wholesale would drop unit conversion.
+  app.feed({
+    context: "vessels.self",
+    updates: [
+      {
+        meta: [{ path: SOC_PATH, value: { displayName: "House SoC" } }],
+      },
+    ],
+  });
+  app.feed(delta(SOC_PATH, 0.25));
+  t.mock.timers.tick(2_000);
+  assert.equal(latest(app).get("soc"), "amber");
+  assert.equal(latest(app).get("soc.displayValue"), "25.0%");
+});
+
+test("a path first seen after boot triggers a metadata refresh", async (t) => {
+  // The boot-time meta answer only covers paths the live tree already
+  // knows; a path whose first value arrives later must trigger one
+  // rate-limited re-fetch that then formats it.
+  const realFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = realFetch;
+  });
+  let fetchCount = 0;
+  globalThis.fetch = async (url) => {
+    fetchCount += 1;
+    if (fetchCount === 1) {
+      // Boot-time answer: the watched path has no data yet, so the
+      // tree has no metadata for it.
+      return { ok: true, json: async () => ({}) };
+    }
+    // Refresh answer: the path has since been seen; metadata attached.
+    assert.ok(String(url).endsWith("/signalk/v1/api/vessels/self/meta"));
+    return {
+      ok: true,
+      json: async () => ({
+        [TANK_PATH]: {
+          units: "ratio",
+          displayUnits: { formula: "value * 100", symbol: "%" },
+        },
+      }),
+    };
+  };
+  const app = fakeApp({ legacy: true });
+  app.config = { settings: { port: 3123 } };
+  const plugin = pluginFactory(app);
+  t.after(() => plugin.stop());
+  plugin.start({
+    contexts: [],
+    tiles: [
+      {
+        id: "fw",
+        label: "Fresh water",
+        checks: [
+          {
+            type: "banded",
+            path: TANK_PATH,
+            low: { warn: 0.4 },
+            display: true,
+          },
+        ],
+      },
+    ],
+  });
+
+  // First value for a metadata-less path: raw formatting (smart
+  // fallback precision), and the refresh fires at once — the rate
+  // limiter's "last refresh" marker starts unset, so the first
+  // on-demand refresh waits no interval.
+  app.feed(delta(TANK_PATH, 0.125));
+  await new Promise((r) => setTimeout(r, 20));
+  assert.ok(fetchCount >= 2, "refresh fetch happened");
+  assert.equal(latest(app).get("fw.displayValue"), "12.5%");
+
+  // Rate limit: a further value change for the now-seeded path asks
+  // for no refresh (it HAS metadata). The delta-driven re-evaluation
+  // itself is throttled, hence the wait. (0.25 is binary-exact, so the
+  // ×100 formula lands on 25.)
+  const count = fetchCount;
+  app.feed(delta(TANK_PATH, 0.25));
+  await new Promise((r) => setTimeout(r, 2_200));
+  assert.equal(latest(app).get("fw.displayValue"), "25.0%");
+  assert.equal(fetchCount, count);
 });
